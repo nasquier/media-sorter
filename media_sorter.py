@@ -11,6 +11,8 @@ import argparse
 import os
 import re
 from pathlib import Path
+from datetime import datetime
+from PIL import Image, ExifTags
 
 
 def parse_folder_name(folder_name):
@@ -103,15 +105,137 @@ def should_rename(original_name, new_name):
     return original_name != new_name
 
 
+def get_media_file_datetime(file_path):
+    """
+    Extract datetime from media file EXIF metadata.
+
+    Args:
+        file_path: Path to the media file
+
+    Returns:
+        datetime object if metadata exists, None otherwise
+    """
+    try:
+        image = Image.open(file_path)
+        exif_data = image._getexif()
+
+        if exif_data is not None:
+            # Find the DateTimeOriginal tag
+            for tag_id, value in exif_data.items():
+                tag = ExifTags.TAGS.get(tag_id, tag_id)
+                if tag == "DateTimeOriginal":
+                    # Parse the datetime string (format: "YYYY:MM:DD HH:MM:SS")
+                    dt = datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+                    return dt
+        return None
+    except Exception:
+        # If file can't be opened or doesn't have EXIF data
+        return None
+
+
+def generate_unique_filename(directory, base_name, extension):
+    """
+    Generate a unique filename in the directory by adding a counter if needed.
+
+    Args:
+        directory: Path object for the directory
+        base_name: Base name for the file (without extension)
+        extension: File extension (including the dot)
+
+    Returns:
+        str: Unique filename
+    """
+    # Try the base name first
+    candidate = f"{base_name}{extension}"
+    candidate_path = directory / candidate
+
+    if not candidate_path.exists():
+        return candidate
+
+    # File exists, start adding counters
+    counter = 1
+    while True:
+        candidate = f"{base_name}_{counter:03d}{extension}"
+        candidate_path = directory / candidate
+
+        if not candidate_path.exists():
+            return candidate
+
+        counter += 1
+        if counter > 999:
+            # Safety limit
+            raise ValueError(f"Too many files with base name {base_name}")
+
+
+def rename_media_file(file_path, parent_dir_name):
+    """
+    Rename a media file based on its metadata or parent directory name.
+
+    Args:
+        file_path: Path to the media file
+        parent_dir_name: Name of the parent directory
+
+    Returns:
+        tuple: (old_path, new_path) if renamed, None if not renamed
+    """
+    file_path = Path(file_path)
+
+    # Get file extension
+    extension = file_path.suffix.lower()
+
+    # List of supported media extensions
+    media_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".bmp",
+        ".tiff",
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".mkv",
+        ".webm",
+    }
+
+    if extension not in media_extensions:
+        return None
+
+    # Try to extract datetime from metadata
+    dt = get_media_file_datetime(file_path)
+
+    if dt:
+        # Format: YYYYMMDDHHMMSS_title.ext
+        base_name = f"{dt.strftime('%Y%m%d%H%M%S')}_{parent_dir_name}"
+    else:
+        # No metadata, use parent directory name
+        base_name = parent_dir_name
+
+    # Generate unique filename
+    new_filename = generate_unique_filename(file_path.parent, base_name, extension)
+    new_path = file_path.parent / new_filename
+
+    # Check if renaming is needed
+    if file_path.name != new_filename:
+        try:
+            file_path.rename(new_path)
+            return (str(file_path), str(new_path))
+        except Exception as e:
+            print(f"Error renaming {file_path} to {new_path}: {e}")
+            return None
+
+    return None
+
+
 def rename_folders(root_path):
     """
-    Recursively rename folders in the directory tree from top to bottom.
+    Recursively rename folders and media files in the directory tree from top to bottom.
 
     Args:
         root_path: Root directory path to start processing
 
     Returns:
-        list: List of tuples (old_path, new_path) for renamed folders
+        dict: Dictionary with 'folders' and 'files' keys containing lists of renamed items
     """
     root_path = Path(root_path).resolve()
 
@@ -122,12 +246,14 @@ def rename_folders(root_path):
         raise ValueError(f"Path is not a directory: {root_path}")
 
     renamed_folders = []
+    renamed_files = []
 
     # Walk the directory tree from top to bottom
     # We need to process in sorted order to ensure consistent behavior
-    for dirpath, dirnames, _ in os.walk(root_path, topdown=True):
+    for dirpath, dirnames, filenames in os.walk(root_path, topdown=True):
         # Sort dirnames to process in consistent order
         dirnames.sort()
+        filenames.sort()
 
         # Process each subdirectory
         dirs_to_rename = []
@@ -145,12 +271,12 @@ def rename_folders(root_path):
                 new_path = Path(dirpath) / new_name
                 dirs_to_rename.append((old_path, new_path, dirname, new_name))
 
-        # Perform renames (we do this after collecting to avoid issues with iteration)
+        # Perform folder renames (we do this after collecting to avoid issues with iteration)
         for old_path, new_path, old_name, new_name in dirs_to_rename:
             try:
                 old_path.rename(new_path)
                 renamed_folders.append((str(old_path), str(new_path)))
-                print(f"Renamed: {old_path} -> {new_path}")
+                print(f"Renamed folder: {old_path} -> {new_path}")
 
                 # Update dirnames list to reflect the rename
                 idx = dirnames.index(old_name)
@@ -158,13 +284,24 @@ def rename_folders(root_path):
             except Exception as e:
                 print(f"Error renaming {old_path} to {new_path}: {e}")
 
-    return renamed_folders
+        # Process media files in the current directory
+        # Get the current directory name for use in file renaming
+        current_dir_name = Path(dirpath).name
+
+        for filename in filenames:
+            file_path = Path(dirpath) / filename
+            result = rename_media_file(file_path, current_dir_name)
+            if result:
+                renamed_files.append(result)
+                print(f"Renamed file: {result[0]} -> {result[1]}")
+
+    return {"folders": renamed_folders, "files": renamed_files}
 
 
 def main():
     """Main entry point for the script."""
     parser = argparse.ArgumentParser(
-        description="Rename folders with date and title formatting."
+        description="Rename folders and media files with date and title formatting."
     )
     parser.add_argument("folder_path", help="Path to the folder to process")
     parser.add_argument(
@@ -184,18 +321,65 @@ def main():
                 return 1
 
             print("Dry run - no actual changes will be made:")
-            for dirpath, dirnames, _ in os.walk(root_path, topdown=True):
+            folder_count = 0
+            file_count = 0
+
+            for dirpath, dirnames, filenames in os.walk(root_path, topdown=True):
                 dirnames.sort()
+                filenames.sort()
+
+                # Check folders
                 for dirname in dirnames:
                     date_str, title = parse_folder_name(dirname)
                     new_name = format_folder_name(date_str, title)
                     if should_rename(dirname, new_name):
                         old_path = Path(dirpath) / dirname
                         new_path = Path(dirpath) / new_name
-                        print(f"Would rename: {old_path} -> {new_path}")
+                        print(f"Would rename folder: {old_path} -> {new_path}")
+                        folder_count += 1
+
+                # Check files
+                current_dir_name = Path(dirpath).name
+                for filename in filenames:
+                    file_path = Path(dirpath) / filename
+                    extension = file_path.suffix.lower()
+                    media_extensions = {
+                        ".jpg",
+                        ".jpeg",
+                        ".png",
+                        ".gif",
+                        ".bmp",
+                        ".tiff",
+                        ".mp4",
+                        ".mov",
+                        ".avi",
+                        ".mkv",
+                        ".webm",
+                    }
+
+                    if extension in media_extensions:
+                        dt = get_media_file_datetime(file_path)
+                        if dt:
+                            base_name = (
+                                f"{dt.strftime('%Y%m%d%H%M%S')}_{current_dir_name}"
+                            )
+                        else:
+                            base_name = current_dir_name
+
+                        new_filename = generate_unique_filename(
+                            file_path.parent, base_name, extension
+                        )
+                        if filename != new_filename:
+                            new_path = file_path.parent / new_filename
+                            print(f"Would rename file: {file_path} -> {new_path}")
+                            file_count += 1
+
+            print(f"\nTotal folders that would be renamed: {folder_count}")
+            print(f"Total files that would be renamed: {file_count}")
         else:
-            renamed = rename_folders(args.folder_path)
-            print(f"\nTotal folders renamed: {len(renamed)}")
+            result = rename_folders(args.folder_path)
+            print(f"\nTotal folders renamed: {len(result['folders'])}")
+            print(f"Total files renamed: {len(result['files'])}")
 
         return 0
     except Exception as e:
