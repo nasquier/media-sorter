@@ -43,7 +43,9 @@ def parse_folder_name(folder_name):
         # Only treat as a date if there's a dash or space after the year
         # This means "2023-01-15", "2023-01", "2023 Summer" are dates
         # but "20230115_my-photos" is not
-        has_dash = "-" in folder_name[:10]  # Check first 10 chars for dash
+        # We check for dash in the date portion (max length YYYY-MM-DD is 10)
+        MAX_DATE_LENGTH = 10
+        has_dash = "-" in folder_name[:MAX_DATE_LENGTH]
         has_space = " " in folder_name
 
         if has_dash or (has_space and title):
@@ -83,8 +85,8 @@ def format_folder_name(date_str, title):
         else:
             return date_str
     else:
-        # If no date, just return formatted title
-        return formatted_title if formatted_title else title
+        # If no date, return formatted title (always lowercase with dashes)
+        return formatted_title
 
 
 def should_rename(original_name, new_name):
