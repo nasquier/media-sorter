@@ -88,6 +88,8 @@ def parse_folder_name(folder_name: str) -> Tuple[Optional[str], str]:
         - "2023-01 Vacation" -> date: "202301", title: "Vacation"
         - "2023 Summer" -> date: "2023", title: "Summer"
         - "My Photos" -> date: None, title: "My Photos"
+        - "20230115_my-photos" -> date: "20230115", title: "my-photos"
+          (already formatted)
 
     Args:
         folder_name: The original folder name
@@ -96,10 +98,17 @@ def parse_folder_name(folder_name: str) -> Tuple[Optional[str], str]:
         tuple: (date_str, title) where date_str is formatted without dashes
                and title is the remaining part
     """
+    # First check if it's already in formatted form:
+    # YYYYMMDD_title or YYYYMM_title or YYYY_title
+    formatted_pattern = r"^(\d{4}|\d{6}|\d{8})_(.+)$"
+    match = re.match(formatted_pattern, folder_name)
+    if match:
+        date_str, title = match.groups()
+        return date_str, title
+
     # Pattern to match optional date at the start
     # YYYY-MM-DD or YYYY-MM or YYYY followed by space and title
-    # This pattern requires either a dash or a space after the year to avoid
-    # matching already formatted dates like "20230115_my-photos"
+    # This pattern requires either a dash or a space after the year
     pattern = r"^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?(?:\s+(.*))?$"
     match = re.match(pattern, folder_name)
 
@@ -110,7 +119,7 @@ def parse_folder_name(folder_name: str) -> Tuple[Optional[str], str]:
 
     # Only treat as a date if there's a dash or space after the year
     # This means "2023-01-15", "2023-01", "2023 Summer" are dates
-    # but "20230115_my-photos" is not
+    # but "20230115_my-photos" is not (handled above)
     if not _has_date_separator(folder_name):
         return None, folder_name
 
@@ -126,9 +135,39 @@ def parse_folder_name(folder_name: str) -> Tuple[Optional[str], str]:
     return date_str, title
 
 
+def _sanitize_string(text: str) -> str:
+    """
+    Remove special characters from text, keeping only alphanumeric and spaces.
+
+    Args:
+        text: Text to sanitize
+
+    Returns:
+        Sanitized text with special characters removed
+    """
+    # Remove all special characters except spaces
+    # This includes: @, !, ?, :, ;, -, etc.
+    sanitized = re.sub(r"[^a-zA-Z0-9\s]", "", text)
+    # Clean up multiple spaces and trim
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+    return sanitized
+
+
 def _format_title(title: str) -> str:
     """Format title to lowercase with dashes instead of spaces."""
-    return title.lower().replace(" ", "-")
+    # If title has spaces, sanitize and format it
+    if " " in title:
+        sanitized_title = _sanitize_string(title)
+        return sanitized_title.lower().replace(" ", "-")
+    # If title is already in dash-separated format, check if it needs sanitization
+    # by seeing if it has any special characters
+    elif re.search(r"[^a-zA-Z0-9-]", title):
+        # Has special characters, sanitize it
+        sanitized_title = _sanitize_string(title)
+        return sanitized_title.lower().replace(" ", "-")
+    else:
+        # Already formatted correctly (lowercase with dashes, no special chars)
+        return title.lower()
 
 
 def format_folder_name(date_str: Optional[str], title: str) -> str:
@@ -328,8 +367,12 @@ def _create_base_filename(
     if dt_info:
         dt, fmt = dt_info
         title = extract_title_from_folder_name(parent_dir_name)
+        # Format/sanitize the title
+        formatted_title = _format_title(title)
         datetime_str = _format_datetime_from_exif(dt, fmt)
-        return f"{datetime_str}_{title}"
+        return f"{datetime_str}_{formatted_title}"
+    # For files without EXIF, use the parent dir name directly
+    # (it will already be formatted/sanitized if it's a processed folder)
     return parent_dir_name
 
 

@@ -89,6 +89,52 @@ class TestFormatFolderName:
         assert result == "2023_summer"
 
 
+class TestSpecialCharacterSanitization:
+    """Tests for special character sanitization in folder names."""
+
+    def test_exclamation_mark_removed(self):
+        """Test that exclamation marks are removed from folder names."""
+        date_str, title = parse_folder_name("2023-05 Holiday in Spain!")
+        result = format_folder_name(date_str, title)
+        assert result == "202305_holiday-in-spain"
+
+    def test_at_symbol_removed(self):
+        """Test that @ symbols are removed from folder names."""
+        date_str, title = parse_folder_name("2023-08-10 CleanShot@2x")
+        result = format_folder_name(date_str, title)
+        assert result == "20230810_cleanshot2x"
+
+    def test_colon_removed(self):
+        """Test that colons are removed from folder names."""
+        date_str, title = parse_folder_name("2024 Photos: Summer")
+        result = format_folder_name(date_str, title)
+        assert result == "2024_photos-summer"
+
+    def test_multiple_exclamation_marks_removed(self):
+        """Test that multiple exclamation marks are removed."""
+        date_str, title = parse_folder_name("My Awesome Photos!!!")
+        result = format_folder_name(date_str, title)
+        assert result == "my-awesome-photos"
+
+    def test_parentheses_removed(self):
+        """Test that parentheses are removed from folder names."""
+        date_str, title = parse_folder_name("Trip (2023)")
+        result = format_folder_name(date_str, title)
+        assert result == "trip-2023"
+
+    def test_ampersand_removed(self):
+        """Test that ampersands are removed from folder names."""
+        date_str, title = parse_folder_name("Beach & Sun")
+        result = format_folder_name(date_str, title)
+        assert result == "beach-sun"
+
+    def test_already_formatted_unchanged(self):
+        """Test that already formatted folders remain unchanged."""
+        date_str, title = parse_folder_name("20230115_my-photos")
+        result = format_folder_name(date_str, title)
+        assert result == "20230115_my-photos"
+
+
 class TestShouldRename:
     """Tests for should_rename function."""
 
