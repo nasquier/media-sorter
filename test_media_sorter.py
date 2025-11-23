@@ -624,7 +624,7 @@ class TestPartialExifDatetime:
         assert dt_info is None
 
     def test_rename_file_with_partial_exif_datetime(self):
-        """Test that files with partial EXIF datetime are renamed correctly without zero-padding."""
+        """Test that files with partial EXIF datetime are renamed correctly."""
         from media_sorter import rename_media_file
         from PIL import Image
 

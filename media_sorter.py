@@ -208,7 +208,7 @@ def _extract_exif_datetime(image: Image.Image) -> Optional[Tuple[datetime, str]]
     Extract datetime from image EXIF data.
 
     Returns:
-        Tuple of (datetime object, format string used) or None if no valid datetime found.
+        Tuple of (datetime object, format string used) or None if invalid datetime.
         The format string indicates the precision of the original EXIF data.
     """
     exif_data = image.getexif()
