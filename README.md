@@ -16,13 +16,17 @@ A Python script that renames folders to follow a consistent naming convention ba
   - Date is formatted without dashes
   - Title is lowercased
   - Spaces in title are replaced with dashes
+- Renames media files (photos and videos) based on:
+  - EXIF metadata timestamps (when available)
+  - Parent folder name (as fallback)
+  - Sanitizes filenames to remove problematic characters
 - Dry-run mode to preview changes before applying
-- Idempotent (won't rename already-formatted folders)
+- Idempotent (won't rename already-formatted folders/files)
 
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt  
 ```
 
 ## Usage
@@ -67,7 +71,14 @@ pytest test_media_sorter.py -v
 black media_sorter.py test_media_sorter.py
 ```
 
+### Code Linting
+```bash
+flake8 .
+```
+
 ## Requirements
 - Python 3.8+
 - pytest >= 7.0.0
 - black >= 23.0.0
+- flake8 >= 6.0.0
+- Pillow >= 10.0.0

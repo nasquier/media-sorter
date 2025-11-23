@@ -11,6 +11,7 @@ from media_sorter import (
     format_folder_name,
     should_rename,
     rename_folders,
+    extract_title_from_folder_name,
 )
 
 
@@ -100,6 +101,40 @@ class TestShouldRename:
         assert should_rename("20230115_my-photos", "20230115_my-photos") is False
 
 
+class TestExtractTitleFromFolderName:
+    """Tests for extract_title_from_folder_name function."""
+
+    def test_formatted_folder_with_full_date(self):
+        """Test extracting title from formatted folder with full date."""
+        result = extract_title_from_folder_name("20230515_holiday-in-spain")
+        assert result == "holiday-in-spain"
+
+    def test_formatted_folder_with_year_month(self):
+        """Test extracting title from formatted folder with year-month."""
+        result = extract_title_from_folder_name("202305_vacation")
+        assert result == "vacation"
+
+    def test_formatted_folder_with_year_only(self):
+        """Test extracting title from formatted folder with year only."""
+        result = extract_title_from_folder_name("2023_summer-trip")
+        assert result == "summer-trip"
+
+    def test_unformatted_folder_with_date(self):
+        """Test extracting title from unformatted folder with date."""
+        result = extract_title_from_folder_name("2023-05-15 Holiday in Spain")
+        assert result == "Holiday in Spain"
+
+    def test_folder_without_date(self):
+        """Test extracting title from folder without date."""
+        result = extract_title_from_folder_name("my-photos")
+        assert result == "my-photos"
+
+    def test_folder_with_only_date(self):
+        """Test extracting title from folder with only date."""
+        result = extract_title_from_folder_name("20230515")
+        assert result == "20230515"
+
+
 class TestRenameFolders:
     """Tests for rename_folders function."""
 
@@ -119,10 +154,10 @@ class TestRenameFolders:
         test_folder.mkdir()
 
         # Rename folders
-        renamed = rename_folders(self.test_dir)
+        result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(renamed) == 1
+        assert len(result["folders"]) == 1
         assert (Path(self.test_dir) / "20230115_my-photos").exists()
         assert not test_folder.exists()
 
@@ -135,10 +170,10 @@ class TestRenameFolders:
         child.mkdir()
 
         # Rename folders
-        renamed = rename_folders(self.test_dir)
+        result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(renamed) == 2
+        assert len(result["folders"]) == 2
         assert (Path(self.test_dir) / "2023_vacation").exists()
         assert (Path(self.test_dir) / "2023_vacation" / "20230115_beach-day").exists()
 
@@ -149,10 +184,10 @@ class TestRenameFolders:
         test_folder.mkdir()
 
         # Rename folders
-        renamed = rename_folders(self.test_dir)
+        result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(renamed) == 0
+        assert len(result["folders"]) == 0
         assert test_folder.exists()
 
     def test_folder_without_date(self):
@@ -162,10 +197,10 @@ class TestRenameFolders:
         test_folder.mkdir()
 
         # Rename folders
-        renamed = rename_folders(self.test_dir)
+        result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(renamed) == 1
+        assert len(result["folders"]) == 1
         assert (Path(self.test_dir) / "my-photos").exists()
         assert not test_folder.exists()
 
@@ -178,10 +213,10 @@ class TestRenameFolders:
         folder2.mkdir()
 
         # Rename folders
-        renamed = rename_folders(self.test_dir)
+        result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(renamed) == 2
+        assert len(result["folders"]) == 2
         assert (Path(self.test_dir) / "20230115_photos").exists()
         assert (Path(self.test_dir) / "20230220_videos").exists()
 
@@ -192,10 +227,10 @@ class TestRenameFolders:
         test_folder.mkdir()
 
         # Rename folders
-        renamed = rename_folders(self.test_dir)
+        result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(renamed) == 1
+        assert len(result["folders"]) == 1
         assert (Path(self.test_dir) / "20230115").exists()
         assert not test_folder.exists()
 
@@ -206,10 +241,10 @@ class TestRenameFolders:
         test_folder.mkdir()
 
         # Rename folders
-        renamed = rename_folders(self.test_dir)
+        result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(renamed) == 1
+        assert len(result["folders"]) == 1
         assert (Path(self.test_dir) / "202301_january-photos").exists()
         assert not test_folder.exists()
 
@@ -220,10 +255,10 @@ class TestRenameFolders:
         test_folder.mkdir()
 
         # Rename folders
-        renamed = rename_folders(self.test_dir)
+        result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(renamed) == 1
+        assert len(result["folders"]) == 1
         assert (Path(self.test_dir) / "2023_annual-report").exists()
         assert not test_folder.exists()
 
@@ -240,3 +275,184 @@ class TestRenameFolders:
 
         with pytest.raises(ValueError, match="Path is not a directory"):
             rename_folders(str(test_file))
+
+
+class TestMediaFileRenaming:
+    """Tests for media file renaming functionality."""
+
+    def setup_method(self):
+        """Create a temporary directory for testing."""
+        self.test_dir = tempfile.mkdtemp()
+
+    def teardown_method(self):
+        """Clean up temporary directory after testing."""
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_rename_file_without_metadata(self):
+        """Test renaming a file without EXIF metadata."""
+        from media_sorter import rename_media_file
+
+        # Create a test folder
+        test_folder = Path(self.test_dir) / "202305_holiday-in-spain"
+        test_folder.mkdir()
+
+        # Create a simple image file without EXIF data
+        test_file = test_folder / "photo.jpg"
+        test_file.write_bytes(b"fake image data")
+
+        # Rename the file
+        result = rename_media_file(test_file, "202305_holiday-in-spain")
+
+        # Check results
+        assert result is not None
+        assert (test_folder / "202305_holiday-in-spain.jpg").exists()
+        assert not test_file.exists()
+
+    def test_rename_multiple_files_with_counter(self):
+        """Test that multiple files without metadata get numbered."""
+        from media_sorter import rename_media_file
+
+        # Create a test folder
+        test_folder = Path(self.test_dir) / "202305_holiday-in-spain"
+        test_folder.mkdir()
+
+        # Create multiple simple image files without EXIF data
+        files_created = []
+        for i in range(3):
+            test_file = test_folder / f"photo{i}.jpg"
+            test_file.write_bytes(b"fake image data")
+            result = rename_media_file(test_file, "202305_holiday-in-spain")
+            if result:
+                files_created.append(result[1])
+
+        # Check results - files should be renamed with counters
+        assert (test_folder / "202305_holiday-in-spain.jpg").exists()
+        assert (test_folder / "202305_holiday-in-spain_001.jpg").exists()
+        assert (test_folder / "202305_holiday-in-spain_002.jpg").exists()
+
+    def test_non_media_file_not_renamed(self):
+        """Test that non-media files are not renamed."""
+        from media_sorter import rename_media_file
+
+        # Create a test folder
+        test_folder = Path(self.test_dir) / "test-folder"
+        test_folder.mkdir()
+
+        # Create a non-media file
+        test_file = test_folder / "document.txt"
+        test_file.write_text("test content")
+
+        # Try to rename the file
+        result = rename_media_file(test_file, "test-folder")
+
+        # Check results - file should not be renamed
+        assert result is None
+        assert test_file.exists()
+
+    def test_generate_unique_filename(self):
+        """Test unique filename generation with counters."""
+        from media_sorter import generate_unique_filename
+
+        test_folder = Path(self.test_dir)
+
+        # First file should have no counter
+        filename1 = generate_unique_filename(test_folder, "test", ".jpg")
+        assert filename1 == "test.jpg"
+
+        # Create the file
+        (test_folder / filename1).touch()
+
+        # Second file should have _001
+        filename2 = generate_unique_filename(test_folder, "test", ".jpg")
+        assert filename2 == "test_001.jpg"
+
+        # Create the file
+        (test_folder / filename2).touch()
+
+        # Third file should have _002
+        filename3 = generate_unique_filename(test_folder, "test", ".jpg")
+        assert filename3 == "test_002.jpg"
+
+    def test_integrated_folder_and_file_rename(self):
+        """Test that both folders and files are renamed together."""
+        # Create a test folder with files
+        test_folder = Path(self.test_dir) / "2023-05 Holiday in Spain"
+        test_folder.mkdir()
+
+        # Create some simple image files
+        for i in range(2):
+            test_file = test_folder / f"IMG_{i:04d}.jpg"
+            test_file.write_bytes(b"fake image data")
+
+        # Run rename_folders (which should rename both folders and files)
+        from media_sorter import rename_folders
+
+        result = rename_folders(self.test_dir)
+
+        # Check folder was renamed
+        assert len(result["folders"]) == 1
+        renamed_folder = Path(self.test_dir) / "202305_holiday-in-spain"
+        assert renamed_folder.exists()
+
+        # Check files were renamed
+        assert len(result["files"]) == 2
+        assert (renamed_folder / "202305_holiday-in-spain.jpg").exists()
+        assert (renamed_folder / "202305_holiday-in-spain_001.jpg").exists()
+
+    def test_rename_file_with_exif_metadata(self):
+        """Test renaming a file with EXIF metadata."""
+        from media_sorter import rename_media_file, get_media_file_datetime
+        from PIL import Image
+
+        # Create a test folder
+        test_folder = Path(self.test_dir) / "202305_holiday-in-spain"
+        test_folder.mkdir()
+
+        # Create an image with EXIF data
+        img = Image.new("RGB", (100, 100), color="blue")
+        exif_data = img.getexif()
+        # Tag 36867 is DateTimeOriginal
+        exif_data[36867] = "2023:05:15 14:30:45"
+
+        test_file = test_folder / "photo.jpg"
+        img.save(test_file, exif=exif_data)
+
+        # Test that we can extract the datetime
+        dt = get_media_file_datetime(test_file)
+        assert dt is not None
+        assert dt.year == 2023
+        assert dt.month == 5
+        assert dt.day == 15
+        assert dt.hour == 14
+        assert dt.minute == 30
+        assert dt.second == 45
+
+        # Rename the file
+        result = rename_media_file(test_file, "202305_holiday-in-spain")
+
+        # Check results - should be renamed with datetime and title only
+        assert result is not None
+        expected_name = "20230515143045_holiday-in-spain.jpg"
+        assert (test_folder / expected_name).exists()
+        assert not test_file.exists()
+
+    def test_rename_video_file_without_metadata(self):
+        """Test renaming a video file (which has no EXIF metadata)."""
+        from media_sorter import rename_media_file
+
+        # Create a test folder
+        test_folder = Path(self.test_dir) / "202401_winter-trip"
+        test_folder.mkdir()
+
+        # Create a fake video file
+        test_file = test_folder / "video.mp4"
+        test_file.write_bytes(b"fake video data")
+
+        # Rename the file
+        result = rename_media_file(test_file, "202401_winter-trip")
+
+        # Check results - should be renamed with parent directory name (no metadata)
+        assert result is not None
+        assert (test_folder / "202401_winter-trip.mp4").exists()
+        assert not test_file.exists()
