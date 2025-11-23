@@ -419,14 +419,16 @@ class TestMediaFileRenaming:
         img.save(test_file, exif=exif_data)
 
         # Test that we can extract the datetime
-        dt = get_media_file_datetime(test_file)
-        assert dt is not None
+        dt_info = get_media_file_datetime(test_file)
+        assert dt_info is not None
+        dt, fmt = dt_info
         assert dt.year == 2023
         assert dt.month == 5
         assert dt.day == 15
         assert dt.hour == 14
         assert dt.minute == 30
         assert dt.second == 45
+        assert fmt == "%Y:%m:%d %H:%M:%S"
 
         # Rename the file
         result = rename_media_file(test_file, "202305_holiday-in-spain")
@@ -455,4 +457,193 @@ class TestMediaFileRenaming:
         # Check results - should be renamed with parent directory name (no metadata)
         assert result is not None
         assert (test_folder / "202401_winter-trip.mp4").exists()
+        assert not test_file.exists()
+
+
+class TestPartialExifDatetime:
+    """Tests for partial EXIF datetime parsing."""
+
+    def setup_method(self):
+        """Create a temporary directory for testing."""
+        self.test_dir = tempfile.mkdtemp()
+
+    def teardown_method(self):
+        """Clean up temporary directory after testing."""
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_exif_date_with_hour_minute(self):
+        """Test parsing EXIF with date, hour, and minute (no seconds)."""
+        from media_sorter import get_media_file_datetime, _format_datetime_from_exif
+        from PIL import Image
+
+        test_folder = Path(self.test_dir)
+        img = Image.new("RGB", (100, 100), color="red")
+        exif_data = img.getexif()
+        exif_data[36867] = "2023:05:15 14:30"  # Missing seconds
+
+        test_file = test_folder / "test.jpg"
+        img.save(test_file, exif=exif_data)
+
+        dt_info = get_media_file_datetime(test_file)
+        assert dt_info is not None
+        dt, fmt = dt_info
+        assert dt.year == 2023
+        assert dt.month == 5
+        assert dt.day == 15
+        assert dt.hour == 14
+        assert dt.minute == 30
+        assert dt.second == 0  # Should default to 0
+        assert fmt == "%Y:%m:%d %H:%M"
+        # Verify formatted output doesn't include seconds
+        formatted = _format_datetime_from_exif(dt, fmt)
+        assert formatted == "202305151430"  # No seconds
+
+    def test_exif_date_with_hour_only(self):
+        """Test parsing EXIF with date and hour only."""
+        from media_sorter import get_media_file_datetime, _format_datetime_from_exif
+        from PIL import Image
+
+        test_folder = Path(self.test_dir)
+        img = Image.new("RGB", (100, 100), color="green")
+        exif_data = img.getexif()
+        exif_data[36867] = "2023:05:15 14"  # Only hour
+
+        test_file = test_folder / "test.jpg"
+        img.save(test_file, exif=exif_data)
+
+        dt_info = get_media_file_datetime(test_file)
+        assert dt_info is not None
+        dt, fmt = dt_info
+        assert dt.year == 2023
+        assert dt.month == 5
+        assert dt.day == 15
+        assert dt.hour == 14
+        assert dt.minute == 0  # Should default to 0
+        assert dt.second == 0  # Should default to 0
+        assert fmt == "%Y:%m:%d %H"
+        # Verify formatted output doesn't include minutes/seconds
+        formatted = _format_datetime_from_exif(dt, fmt)
+        assert formatted == "2023051514"  # No minutes or seconds
+
+    def test_exif_date_only(self):
+        """Test parsing EXIF with date only (no time)."""
+        from media_sorter import get_media_file_datetime, _format_datetime_from_exif
+        from PIL import Image
+
+        test_folder = Path(self.test_dir)
+        img = Image.new("RGB", (100, 100), color="yellow")
+        exif_data = img.getexif()
+        exif_data[36867] = "2023:05:15"  # Date only
+
+        test_file = test_folder / "test.jpg"
+        img.save(test_file, exif=exif_data)
+
+        dt_info = get_media_file_datetime(test_file)
+        assert dt_info is not None
+        dt, fmt = dt_info
+        assert dt.year == 2023
+        assert dt.month == 5
+        assert dt.day == 15
+        assert dt.hour == 0  # Should default to 0
+        assert dt.minute == 0
+        assert dt.second == 0
+        assert fmt == "%Y:%m:%d"
+        # Verify formatted output doesn't include time
+        formatted = _format_datetime_from_exif(dt, fmt)
+        assert formatted == "20230515"  # No time
+
+    def test_exif_year_month_only(self):
+        """Test parsing EXIF with year and month only."""
+        from media_sorter import get_media_file_datetime, _format_datetime_from_exif
+        from PIL import Image
+
+        test_folder = Path(self.test_dir)
+        img = Image.new("RGB", (100, 100), color="cyan")
+        exif_data = img.getexif()
+        exif_data[36867] = "2023:05"  # Year and month only
+
+        test_file = test_folder / "test.jpg"
+        img.save(test_file, exif=exif_data)
+
+        dt_info = get_media_file_datetime(test_file)
+        assert dt_info is not None
+        dt, fmt = dt_info
+        assert dt.year == 2023
+        assert dt.month == 5
+        assert dt.day == 1  # Should default to 1st of month
+        assert dt.hour == 0
+        assert dt.minute == 0
+        assert dt.second == 0
+        assert fmt == "%Y:%m"
+        # Verify formatted output doesn't include day or time
+        formatted = _format_datetime_from_exif(dt, fmt)
+        assert formatted == "202305"  # No day or time
+
+    def test_exif_year_only(self):
+        """Test parsing EXIF with year only."""
+        from media_sorter import get_media_file_datetime, _format_datetime_from_exif
+        from PIL import Image
+
+        test_folder = Path(self.test_dir)
+        img = Image.new("RGB", (100, 100), color="magenta")
+        exif_data = img.getexif()
+        exif_data[36867] = "2023"  # Year only
+
+        test_file = test_folder / "test.jpg"
+        img.save(test_file, exif=exif_data)
+
+        dt_info = get_media_file_datetime(test_file)
+        assert dt_info is not None
+        dt, fmt = dt_info
+        assert dt.year == 2023
+        assert dt.month == 1  # Should default to January
+        assert dt.day == 1  # Should default to 1st
+        assert dt.hour == 0
+        assert dt.minute == 0
+        assert dt.second == 0
+        assert fmt == "%Y"
+        # Verify formatted output is year only
+        formatted = _format_datetime_from_exif(dt, fmt)
+        assert formatted == "2023"  # Year only, no zero-padding
+
+    def test_exif_invalid_format_returns_none(self):
+        """Test that invalid EXIF datetime format returns None."""
+        from media_sorter import get_media_file_datetime
+        from PIL import Image
+
+        test_folder = Path(self.test_dir)
+        img = Image.new("RGB", (100, 100), color="white")
+        exif_data = img.getexif()
+        exif_data[36867] = "invalid date format"
+
+        test_file = test_folder / "test.jpg"
+        img.save(test_file, exif=exif_data)
+
+        dt_info = get_media_file_datetime(test_file)
+        assert dt_info is None
+
+    def test_rename_file_with_partial_exif_datetime(self):
+        """Test that files with partial EXIF datetime are renamed correctly without zero-padding."""
+        from media_sorter import rename_media_file
+        from PIL import Image
+
+        test_folder = Path(self.test_dir) / "202305_vacation"
+        test_folder.mkdir()
+
+        # Create image with partial datetime (date + hour/minute)
+        img = Image.new("RGB", (100, 100), color="orange")
+        exif_data = img.getexif()
+        exif_data[36867] = "2023:05:20 16:45"  # Missing seconds
+
+        test_file = test_folder / "photo.jpg"
+        img.save(test_file, exif=exif_data)
+
+        # Rename the file
+        result = rename_media_file(test_file, "202305_vacation")
+
+        # Check results - should NOT include seconds (no zero-padding)
+        assert result is not None
+        expected_name = "202305201645_vacation.jpg"  # No seconds!
+        assert (test_folder / expected_name).exists()
         assert not test_file.exists()

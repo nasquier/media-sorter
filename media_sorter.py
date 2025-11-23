@@ -203,26 +203,69 @@ def extract_title_from_folder_name(folder_name: str) -> str:
     return folder_name
 
 
-def _extract_exif_datetime(image: Image.Image) -> Optional[datetime]:
-    """Extract datetime from image EXIF data."""
+def _extract_exif_datetime(image: Image.Image) -> Optional[Tuple[datetime, str]]:
+    """
+    Extract datetime from image EXIF data.
+
+    Returns:
+        Tuple of (datetime object, format string used) or None if no valid datetime found.
+        The format string indicates the precision of the original EXIF data.
+    """
     exif_data = image.getexif()
 
     if not exif_data:
         return None
 
+    # All supported datetime formats, from most specific to least specific
+    datetime_formats = [
+        "%Y:%m:%d %H:%M:%S",  # Standard EXIF: "2023:05:15 14:30:45"
+        "%Y:%m:%d %H:%M",  # Date with hour and minute: "2023:05:15 14:30"
+        "%Y:%m:%d %H",  # Date with hour: "2023:05:15 14"
+        "%Y:%m:%d",  # Date only: "2023:05:15"
+        "%Y:%m",  # Year and month: "2023:05"
+        "%Y",  # Year only: "2023"
+    ]
+
     for preferred_tag in DATETIME_EXIF_TAGS:
         for tag_id, value in exif_data.items():
             tag = ExifTags.TAGS.get(tag_id, tag_id)
             if tag == preferred_tag:
-                try:
-                    return datetime.strptime(value, EXIF_DATETIME_FORMAT)
-                except (ValueError, TypeError):
-                    continue
+                for fmt in datetime_formats:
+                    try:
+                        dt = datetime.strptime(value, fmt)
+                        return (dt, fmt)
+                    except (ValueError, TypeError):
+                        continue
 
     return None
 
 
-def get_media_file_datetime(file_path: Path) -> Optional[datetime]:
+def _format_datetime_from_exif(dt: datetime, fmt: str) -> str:
+    """
+    Format datetime based on the precision of the original EXIF data.
+
+    Args:
+        dt: datetime object
+        fmt: The format string that was used to parse the EXIF data
+
+    Returns:
+        Formatted datetime string with appropriate precision
+    """
+    # Map format strings to output formats (only include what was present)
+    format_map = {
+        "%Y:%m:%d %H:%M:%S": "%Y%m%d%H%M%S",  # Full: 20230515143045
+        "%Y:%m:%d %H:%M": "%Y%m%d%H%M",  # No seconds: 202305151430
+        "%Y:%m:%d %H": "%Y%m%d%H",  # Hour only: 2023051514
+        "%Y:%m:%d": "%Y%m%d",  # Date only: 20230515
+        "%Y:%m": "%Y%m",  # Year+month: 202305
+        "%Y": "%Y",  # Year only: 2023
+    }
+
+    output_format = format_map.get(fmt, "%Y%m%d%H%M%S")  # Default to full format
+    return dt.strftime(output_format)
+
+
+def get_media_file_datetime(file_path: Path) -> Optional[Tuple[datetime, str]]:
     """
     Extract datetime from media file EXIF metadata.
 
@@ -230,7 +273,7 @@ def get_media_file_datetime(file_path: Path) -> Optional[datetime]:
         file_path: Path to the media file
 
     Returns:
-        datetime object if metadata exists, None otherwise
+        Tuple of (datetime object, format string) if metadata exists, None otherwise
     """
     try:
         with Image.open(file_path) as image:
@@ -269,11 +312,24 @@ def generate_unique_filename(directory: Path, base_name: str, extension: str) ->
     raise ValueError(f"Too many files with base name {base_name}")
 
 
-def _create_base_filename(dt: Optional[datetime], parent_dir_name: str) -> str:
-    """Create base filename from datetime and parent directory name."""
-    if dt:
+def _create_base_filename(
+    dt_info: Optional[Tuple[datetime, str]], parent_dir_name: str
+) -> str:
+    """
+    Create base filename from datetime and parent directory name.
+
+    Args:
+        dt_info: Tuple of (datetime, format_string) or None
+        parent_dir_name: Name of the parent directory
+
+    Returns:
+        Base filename without extension
+    """
+    if dt_info:
+        dt, fmt = dt_info
         title = extract_title_from_folder_name(parent_dir_name)
-        return f"{dt.strftime('%Y%m%d%H%M%S')}_{title}"
+        datetime_str = _format_datetime_from_exif(dt, fmt)
+        return f"{datetime_str}_{title}"
     return parent_dir_name
 
 
@@ -297,8 +353,8 @@ def rename_media_file(
         return None
 
     # Try to extract datetime from metadata
-    dt = get_media_file_datetime(file_path)
-    base_name = _create_base_filename(dt, parent_dir_name)
+    dt_info = get_media_file_datetime(file_path)
+    base_name = _create_base_filename(dt_info, parent_dir_name)
 
     # Generate unique filename
     new_filename = generate_unique_filename(file_path.parent, base_name, extension)
@@ -448,8 +504,8 @@ def _dry_run_folders(root_path: Path) -> Tuple[int, int]:
             extension = file_path.suffix.lower()
 
             if extension in MEDIA_EXTENSIONS:
-                dt = get_media_file_datetime(file_path)
-                base_name = _create_base_filename(dt, current_dir_name)
+                dt_info = get_media_file_datetime(file_path)
+                base_name = _create_base_filename(dt_info, current_dir_name)
                 new_filename = generate_unique_filename(
                     file_path.parent, base_name, extension
                 )
