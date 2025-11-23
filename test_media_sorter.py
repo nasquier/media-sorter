@@ -431,7 +431,7 @@ class TestMediaFileRenaming:
         # Rename the file
         result = rename_media_file(test_file, "202305_holiday-in-spain")
 
-        # Check results - should be renamed with datetime and title only (no date prefix)
+        # Check results - should be renamed with datetime and title only
         assert result is not None
         expected_name = "20230515143045_holiday-in-spain.jpg"
         assert (test_folder / expected_name).exists()

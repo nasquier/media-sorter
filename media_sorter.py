@@ -49,14 +49,6 @@ class ParsedFolderName:
 
 
 @dataclass
-class ParsedFolderName:
-    """Result of parsing a folder name."""
-
-    date_str: Optional[str]
-    title: str
-
-
-@dataclass
 class RenameResult:
     """Result of a rename operation."""
 
@@ -160,27 +152,6 @@ def format_folder_name(date_str: Optional[str], title: str) -> str:
     return formatted_title
 
 
-def format_folder_name(date_str: Optional[str], title: str) -> str:
-    """
-    Format folder name according to the specification.
-
-    Format: {YYYYMMDD}_{title} where title is lowercased with dashes
-
-    Args:
-        date_str: Date string without dashes (e.g., "20230115", "202301", "2023")
-        title: Title text
-
-    Returns:
-        str: Formatted folder name
-    """
-    formatted_title = _format_title(title)
-
-    if date_str:
-        return f"{date_str}_{formatted_title}" if formatted_title else date_str
-
-    return formatted_title
-
-
 def should_rename(original_name: str, new_name: str) -> bool:
     """
     Check if a folder should be renamed.
@@ -214,7 +185,8 @@ def extract_title_from_folder_name(folder_name: str) -> str:
     Returns:
         str: The title portion of the folder name
     """
-    # Check if it's already in formatted form: YYYYMMDD_title or YYYYMM_title or YYYY_title
+    # Check if it's already in formatted form:
+    # YYYYMMDD_title or YYYYMM_title or YYYY_title
     title = _extract_title_from_formatted(folder_name)
     if title:
         return title
@@ -248,24 +220,6 @@ def _extract_exif_datetime(image: Image.Image) -> Optional[datetime]:
                     continue
 
     return None
-
-
-def get_media_file_datetime(file_path: Path) -> Optional[datetime]:
-    """
-    Extract datetime from media file EXIF metadata.
-
-    Args:
-        file_path: Path to the media file
-
-    Returns:
-        datetime object if metadata exists, None otherwise
-    """
-    try:
-        with Image.open(file_path) as image:
-            return _extract_exif_datetime(image)
-    except Exception:
-        # If file can't be opened or doesn't have EXIF data (e.g., videos)
-        return None
 
 
 def get_media_file_datetime(file_path: Path) -> Optional[datetime]:
@@ -321,45 +275,6 @@ def _create_base_filename(dt: Optional[datetime], parent_dir_name: str) -> str:
         title = extract_title_from_folder_name(parent_dir_name)
         return f"{dt.strftime('%Y%m%d%H%M%S')}_{title}"
     return parent_dir_name
-
-
-def rename_media_file(
-    file_path: Path, parent_dir_name: str
-) -> Optional[Tuple[str, str]]:
-    """
-    Rename a media file based on its metadata or parent directory name.
-
-    Args:
-        file_path: Path to the media file
-        parent_dir_name: Name of the parent directory
-
-    Returns:
-        tuple: (old_path, new_path) if renamed, None if not renamed
-    """
-    file_path = Path(file_path)
-    extension = file_path.suffix.lower()
-
-    if extension not in MEDIA_EXTENSIONS:
-        return None
-
-    # Try to extract datetime from metadata
-    dt = get_media_file_datetime(file_path)
-    base_name = _create_base_filename(dt, parent_dir_name)
-
-    # Generate unique filename
-    new_filename = generate_unique_filename(file_path.parent, base_name, extension)
-    new_path = file_path.parent / new_filename
-
-    # Check if renaming is needed
-    if file_path.name == new_filename:
-        return None
-
-    try:
-        file_path.rename(new_path)
-        return (str(file_path), str(new_path))
-    except Exception as e:
-        print(f"Error renaming {file_path} to {new_path}: {e}")
-        return None
 
 
 def rename_media_file(
@@ -465,48 +380,8 @@ def rename_folders(root_path: str) -> Dict[str, List[Tuple[str, str]]]:
         root_path: Root directory path to start processing
 
     Returns:
-        dict: Dictionary with 'folders' and 'files' keys containing lists of renamed items
-
-    Raises:
-        ValueError: If path doesn't exist or is not a directory
-    """
-    root_path = Path(root_path).resolve()
-
-    if not root_path.exists():
-        raise ValueError(f"Path does not exist: {root_path}")
-
-    if not root_path.is_dir():
-        raise ValueError(f"Path is not a directory: {root_path}")
-
-    stats = RenameStats(folders=[], files=[])
-
-    # Walk the directory tree from top to bottom
-    for dirpath, dirnames, filenames in os.walk(root_path, topdown=True):
-        # Sort for consistent behavior
-        dirnames.sort()
-        filenames.sort()
-
-        # Process folders
-        dirs_to_rename = _process_folders_in_directory(dirpath, dirnames)
-        renamed_folders = _rename_folders_batch(dirs_to_rename, dirnames)
-        stats.folders.extend(renamed_folders)
-
-        # Process files
-        renamed_files = _process_files_in_directory(dirpath, filenames)
-        stats.files.extend(renamed_files)
-
-    return stats.to_dict()
-
-
-def rename_folders(root_path: str) -> Dict[str, List[Tuple[str, str]]]:
-    """
-    Recursively rename folders and media files in the directory tree from top to bottom.
-
-    Args:
-        root_path: Root directory path to start processing
-
-    Returns:
-        dict: Dictionary with 'folders' and 'files' keys containing lists of renamed items
+        dict: Dictionary with 'folders' and 'files' keys containing lists of renamed
+        items
 
     Raises:
         ValueError: If path doesn't exist or is not a directory
