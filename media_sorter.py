@@ -133,7 +133,7 @@ def extract_title_from_folder_name(folder_name):
         str: The title portion of the folder name
     """
     # Check if it's already in formatted form: YYYYMMDD_title or YYYYMM_title or YYYY_title
-    formatted_pattern = r"^(\d{4,8})_(.+)$"
+    formatted_pattern = r"^(\d{4}|\d{6}|\d{8})_(.+)$"
     match = re.match(formatted_pattern, folder_name)
     if match:
         _, title = match.groups()
