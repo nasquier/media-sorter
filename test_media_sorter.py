@@ -401,3 +401,23 @@ class TestMediaFileRenaming:
         expected_name = "20230515143045_202305_holiday-in-spain.jpg"
         assert (test_folder / expected_name).exists()
         assert not test_file.exists()
+
+    def test_rename_video_file_without_metadata(self):
+        """Test renaming a video file (which has no EXIF metadata)."""
+        from media_sorter import rename_media_file
+
+        # Create a test folder
+        test_folder = Path(self.test_dir) / "202401_winter-trip"
+        test_folder.mkdir()
+
+        # Create a fake video file
+        test_file = test_folder / "video.mp4"
+        test_file.write_bytes(b"fake video data")
+
+        # Rename the file
+        result = rename_media_file(test_file, "202401_winter-trip")
+
+        # Check results - should be renamed with parent directory name (no metadata)
+        assert result is not None
+        assert (test_folder / "202401_winter-trip.mp4").exists()
+        assert not test_file.exists()

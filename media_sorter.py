@@ -131,20 +131,26 @@ def get_media_file_datetime(file_path):
         datetime object if metadata exists, None otherwise
     """
     try:
-        image = Image.open(file_path)
-        exif_data = image.getexif()
+        with Image.open(file_path) as image:
+            exif_data = image.getexif()
 
-        if exif_data is not None and len(exif_data) > 0:
-            # Find the DateTimeOriginal tag
-            for tag_id, value in exif_data.items():
-                tag = ExifTags.TAGS.get(tag_id, tag_id)
-                if tag == "DateTimeOriginal":
-                    # Parse the datetime string (format: "YYYY:MM:DD HH:MM:SS")
-                    dt = datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
-                    return dt
+            if exif_data is not None and len(exif_data) > 0:
+                # Try multiple datetime tags in order of preference
+                # DateTimeOriginal: when photo was taken
+                # DateTimeDigitized: when photo was digitized
+                # DateTime: when file was last modified
+                datetime_tags = ["DateTimeOriginal", "DateTimeDigitized", "DateTime"]
+
+                for preferred_tag in datetime_tags:
+                    for tag_id, value in exif_data.items():
+                        tag = ExifTags.TAGS.get(tag_id, tag_id)
+                        if tag == preferred_tag:
+                            # Parse the datetime string (format: "YYYY:MM:DD HH:MM:SS")
+                            dt = datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+                            return dt
         return None
     except Exception:
-        # If file can't be opened or doesn't have EXIF data
+        # If file can't be opened or doesn't have EXIF data (e.g., videos)
         return None
 
 
