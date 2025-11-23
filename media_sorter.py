@@ -14,6 +14,21 @@ from pathlib import Path
 from datetime import datetime
 from PIL import Image, ExifTags
 
+# Supported media file extensions
+MEDIA_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".tiff",
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".webm",
+}
+
 
 def parse_folder_name(folder_name):
     """
@@ -117,9 +132,9 @@ def get_media_file_datetime(file_path):
     """
     try:
         image = Image.open(file_path)
-        exif_data = image._getexif()
+        exif_data = image.getexif()
 
-        if exif_data is not None:
+        if exif_data is not None and len(exif_data) > 0:
             # Find the DateTimeOriginal tag
             for tag_id, value in exif_data.items():
                 tag = ExifTags.TAGS.get(tag_id, tag_id)
@@ -183,22 +198,7 @@ def rename_media_file(file_path, parent_dir_name):
     # Get file extension
     extension = file_path.suffix.lower()
 
-    # List of supported media extensions
-    media_extensions = {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".gif",
-        ".bmp",
-        ".tiff",
-        ".mp4",
-        ".mov",
-        ".avi",
-        ".mkv",
-        ".webm",
-    }
-
-    if extension not in media_extensions:
+    if extension not in MEDIA_EXTENSIONS:
         return None
 
     # Try to extract datetime from metadata
@@ -343,21 +343,8 @@ def main():
                 for filename in filenames:
                     file_path = Path(dirpath) / filename
                     extension = file_path.suffix.lower()
-                    media_extensions = {
-                        ".jpg",
-                        ".jpeg",
-                        ".png",
-                        ".gif",
-                        ".bmp",
-                        ".tiff",
-                        ".mp4",
-                        ".mov",
-                        ".avi",
-                        ".mkv",
-                        ".webm",
-                    }
 
-                    if extension in media_extensions:
+                    if extension in MEDIA_EXTENSIONS:
                         dt = get_media_file_datetime(file_path)
                         if dt:
                             base_name = (
