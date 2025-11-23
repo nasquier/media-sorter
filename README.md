@@ -1,10 +1,12 @@
-# media-sorter
-Rename and organize photos and videos with their metadata.\
 ⚠️⚠️⚠️\
-Mostly done with AI. I supervised the tasks and made sure the code works fine for my usage, but use it at your own risk.\
+Mostly done with AI. 
+I supervised the tasks and made sure the code works fine for my usage, but use it at your own risk.\
 Please backup your files and check the code yourself before doing anything.\
 I am not responsible of any problems or data loss following the execeution of this script.\
 ⚠️⚠️⚠️
+
+# media-sorter
+Rename and organize photos and videos with their metadata.\
 
 ## Description
 A Python script that renames folders to follow a consistent naming convention based on dates and titles.
