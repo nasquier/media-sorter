@@ -120,6 +120,38 @@ def should_rename(original_name, new_name):
     return original_name != new_name
 
 
+def extract_title_from_folder_name(folder_name):
+    """
+    Extract just the title portion from a folder name, removing any date prefix.
+
+    Handles both formatted (YYYYMMDD_title) and unformatted (YYYY-MM-DD Title) names.
+
+    Args:
+        folder_name: The folder name to extract title from
+
+    Returns:
+        str: The title portion of the folder name
+    """
+    # Check if it's already in formatted form: YYYYMMDD_title or YYYYMM_title or YYYY_title
+    formatted_pattern = r"^(\d{4,8})_(.+)$"
+    match = re.match(formatted_pattern, folder_name)
+    if match:
+        _, title = match.groups()
+        return title
+
+    # Otherwise, try to parse as unformatted date
+    date_str, title = parse_folder_name(folder_name)
+    if date_str and title:
+        # Has a date and title, return just the title
+        return title
+    elif not date_str and title:
+        # No date, entire name is the title
+        return title
+    else:
+        # Edge case: date but no title (shouldn't happen in practice)
+        return folder_name
+
+
 def get_media_file_datetime(file_path):
     """
     Extract datetime from media file EXIF metadata.
@@ -211,8 +243,9 @@ def rename_media_file(file_path, parent_dir_name):
     dt = get_media_file_datetime(file_path)
 
     if dt:
-        # Format: YYYYMMDDHHMMSS_title.ext
-        base_name = f"{dt.strftime('%Y%m%d%H%M%S')}_{parent_dir_name}"
+        # Format: YYYYMMDDHHMMSS_title.ext (title only, no date prefix)
+        title = extract_title_from_folder_name(parent_dir_name)
+        base_name = f"{dt.strftime('%Y%m%d%H%M%S')}_{title}"
     else:
         # No metadata, use parent directory name
         base_name = parent_dir_name
@@ -353,9 +386,8 @@ def main():
                     if extension in MEDIA_EXTENSIONS:
                         dt = get_media_file_datetime(file_path)
                         if dt:
-                            base_name = (
-                                f"{dt.strftime('%Y%m%d%H%M%S')}_{current_dir_name}"
-                            )
+                            title = extract_title_from_folder_name(current_dir_name)
+                            base_name = f"{dt.strftime('%Y%m%d%H%M%S')}_{title}"
                         else:
                             base_name = current_dir_name
 

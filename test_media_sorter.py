@@ -11,6 +11,7 @@ from media_sorter import (
     format_folder_name,
     should_rename,
     rename_folders,
+    extract_title_from_folder_name,
 )
 
 
@@ -98,6 +99,40 @@ class TestShouldRename:
     def test_same_names(self):
         """Test that same names should not be renamed."""
         assert should_rename("20230115_my-photos", "20230115_my-photos") is False
+
+
+class TestExtractTitleFromFolderName:
+    """Tests for extract_title_from_folder_name function."""
+
+    def test_formatted_folder_with_full_date(self):
+        """Test extracting title from formatted folder with full date."""
+        result = extract_title_from_folder_name("20230515_holiday-in-spain")
+        assert result == "holiday-in-spain"
+
+    def test_formatted_folder_with_year_month(self):
+        """Test extracting title from formatted folder with year-month."""
+        result = extract_title_from_folder_name("202305_vacation")
+        assert result == "vacation"
+
+    def test_formatted_folder_with_year_only(self):
+        """Test extracting title from formatted folder with year only."""
+        result = extract_title_from_folder_name("2023_summer-trip")
+        assert result == "summer-trip"
+
+    def test_unformatted_folder_with_date(self):
+        """Test extracting title from unformatted folder with date."""
+        result = extract_title_from_folder_name("2023-05-15 Holiday in Spain")
+        assert result == "Holiday in Spain"
+
+    def test_folder_without_date(self):
+        """Test extracting title from folder without date."""
+        result = extract_title_from_folder_name("my-photos")
+        assert result == "my-photos"
+
+    def test_folder_with_only_date(self):
+        """Test extracting title from folder with only date."""
+        result = extract_title_from_folder_name("20230515")
+        assert result == "20230515"
 
 
 class TestRenameFolders:
@@ -396,9 +431,9 @@ class TestMediaFileRenaming:
         # Rename the file
         result = rename_media_file(test_file, "202305_holiday-in-spain")
 
-        # Check results - should be renamed with datetime
+        # Check results - should be renamed with datetime and title only (no date prefix)
         assert result is not None
-        expected_name = "20230515143045_202305_holiday-in-spain.jpg"
+        expected_name = "20230515143045_holiday-in-spain.jpg"
         assert (test_folder / expected_name).exists()
         assert not test_file.exists()
 
