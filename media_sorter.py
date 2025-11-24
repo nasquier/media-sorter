@@ -677,13 +677,13 @@ def main() -> int:
 
             # Handle errors
             if stats.errors:
-                error_log_path = root_path / "error.log"
+                error_log_path = Path.cwd() / "error.log"
                 _write_error_log(stats.errors, error_log_path)
                 _display_error_summary(stats.errors)
                 return 1  # Exit with error code if there were errors
             else:
                 # Clean up error log if it exists and there are no errors
-                error_log_path = root_path / "error.log"
+                error_log_path = Path.cwd() / "error.log"
                 if error_log_path.exists():
                     error_log_path.unlink()
 

@@ -94,7 +94,7 @@ python media_sorter.py --dry-run /path/to/folder
 When errors occur during processing (e.g., permission denied, file in use), the script:
 
 1. **Continues processing** - Errors don't stop the entire operation
-2. **Logs to `error.log`** - All failed operations are written to this file in the target directory
+2. **Logs to `error.log`** - All failed operations are written to this file in the current directory
 3. **Displays a summary** - At the end, shows all errors encountered
 4. **Returns exit code 1** - If any errors occurred (useful for CI/CD)
 
