@@ -54,6 +54,24 @@ class TestParseFolderName:
         assert date_str == "20230115"
         assert title == "My Great Photos"
 
+    def test_year_range_with_title(self):
+        """Test parsing folder with year range and title."""
+        date_str, title = parse_folder_name("2020-2022 Childhood")
+        assert date_str == "2020-2022"
+        assert title == "Childhood"
+
+    def test_year_range_without_title(self):
+        """Test parsing folder with year range but no title."""
+        date_str, title = parse_folder_name("2015-2018")
+        assert date_str == "2015-2018"
+        assert title == ""
+
+    def test_year_range_already_formatted(self):
+        """Test parsing already formatted year range folder."""
+        date_str, title = parse_folder_name("2020-2022_childhood")
+        assert date_str == "2020-2022"
+        assert title == "childhood"
+
 
 class TestFormatFolderName:
     """Tests for format_folder_name function."""
@@ -87,6 +105,16 @@ class TestFormatFolderName:
         """Test formatting with year only and title."""
         result = format_folder_name("2023", "Summer")
         assert result == "2023_summer"
+
+    def test_year_range_with_title(self):
+        """Test formatting with year range and title."""
+        result = format_folder_name("2020-2022", "Childhood")
+        assert result == "2020-2022_childhood"
+
+    def test_year_range_without_title(self):
+        """Test formatting with year range but no title."""
+        result = format_folder_name("2015-2018", "")
+        assert result == "2015-2018"
 
 
 class TestSpecialCharacterSanitization:
@@ -209,6 +237,16 @@ class TestExtractTitleFromFolderName:
         """Test extracting title from folder with only date."""
         result = extract_title_from_folder_name("20230515")
         assert result == "20230515"
+
+    def test_formatted_folder_with_year_range(self):
+        """Test extracting title from formatted folder with year range."""
+        result = extract_title_from_folder_name("2020-2022_childhood")
+        assert result == "childhood"
+
+    def test_unformatted_folder_with_year_range(self):
+        """Test extracting title from unformatted folder with year range."""
+        result = extract_title_from_folder_name("2020-2022 Childhood")
+        assert result == "Childhood"
 
 
 class TestRenameFolders:

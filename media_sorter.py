@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Media Sorter - Rename folders with date and title formatting.
+Media Sorter - Organize photos and videos with intelligent renaming.
 
-This script takes a folder path as input and renames folders to follow
-the format: {YYYYMMDD}_{title} where the title is lowercased with dashes
-instead of spaces.
+Renames folders and media files based on dates and metadata:
+- Folders: YYYYMMDD_title or YYYY-YYYY_title (for date ranges)
+- Files: Uses EXIF metadata when available, parent folder name as fallback
+- Preserves Unicode characters (accents, etc.)
+- Removes special characters (@, !, :, etc.)
 """
 
 import argparse
@@ -37,15 +39,6 @@ DATETIME_EXIF_TAGS = ["DateTimeOriginal", "DateTimeDigitized", "DateTime"]
 # Constants
 MAX_DATE_LENGTH = 10  # Length of "YYYY-MM-DD"
 MAX_FILENAME_COUNTER = 999
-EXIF_DATETIME_FORMAT = "%Y:%m:%d %H:%M:%S"
-
-
-@dataclass
-class ParsedFolderName:
-    """Result of parsing a folder name."""
-
-    date_str: Optional[str]
-    title: str
 
 
 @dataclass
@@ -82,11 +75,12 @@ def parse_folder_name(folder_name: str) -> Tuple[Optional[str], str]:
     """
     Parse folder name to extract optional date and title.
 
-    Date format: YYYY-MM-DD (month and day are optional)
+    Date format: YYYY-MM-DD (month and day are optional) or YYYY-YYYY (year range)
     Examples:
         - "2023-01-15 My Photos" -> date: "20230115", title: "My Photos"
         - "2023-01 Vacation" -> date: "202301", title: "Vacation"
         - "2023 Summer" -> date: "2023", title: "Summer"
+        - "2020-2022 Childhood" -> date: "2020-2022", title: "Childhood"
         - "My Photos" -> date: None, title: "My Photos"
         - "20230115_my-photos" -> date: "20230115", title: "my-photos"
           (already formatted)
@@ -99,11 +93,20 @@ def parse_folder_name(folder_name: str) -> Tuple[Optional[str], str]:
                and title is the remaining part
     """
     # First check if it's already in formatted form:
-    # YYYYMMDD_title or YYYYMM_title or YYYY_title
-    formatted_pattern = r"^(\d{4}|\d{6}|\d{8})_(.+)$"
+    # YYYYMMDD_title or YYYYMM_title or YYYY_title or YYYY-YYYY_title
+    formatted_pattern = r"^(\d{4}(?:-\d{4})?|\d{6}|\d{8})_(.+)$"
     match = re.match(formatted_pattern, folder_name)
     if match:
         date_str, title = match.groups()
+        return date_str, title
+
+    # Check for year range: YYYY-YYYY followed by space and title
+    year_range_pattern = r"^(\d{4})-(\d{4})(?:\s+(.*))?$"
+    match = re.match(year_range_pattern, folder_name)
+    if match:
+        year1, year2, title = match.groups()
+        date_str = f"{year1}-{year2}"
+        title = title if title else ""
         return date_str, title
 
     # Pattern to match optional date at the start
@@ -210,8 +213,12 @@ def should_rename(original_name: str, new_name: str) -> bool:
 
 
 def _extract_title_from_formatted(folder_name: str) -> Optional[str]:
-    """Extract title from already formatted folder name (YYYYMMDD_title)."""
-    formatted_pattern = r"^(\d{4}|\d{6}|\d{8})_(.+)$"
+    """
+    Extract title from already formatted folder name.
+
+    Handles YYYYMMDD_title or YYYY-YYYY_title formats.
+    """
+    formatted_pattern = r"^(\d{4}(?:-\d{4})?|\d{6}|\d{8})_(.+)$"
     match = re.match(formatted_pattern, folder_name)
     return match.group(2) if match else None
 
