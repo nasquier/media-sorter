@@ -50,11 +50,21 @@ class RenameResult:
 
 
 @dataclass
+class ErrorInfo:
+    """Information about an error during processing."""
+
+    path: str
+    error_type: str
+    error_message: str
+
+
+@dataclass
 class RenameStats:
     """Statistics for rename operations."""
 
     folders: List[RenameResult]
     files: List[RenameResult]
+    errors: List[ErrorInfo]
 
     def to_dict(self) -> Dict[str, List[Tuple[str, str]]]:
         """Convert to dictionary format for backward compatibility."""
@@ -446,9 +456,10 @@ def _process_folders_in_directory(
 
 def _rename_folders_batch(
     dirs_to_rename: List[Tuple[Path, Path, str, str]], dirnames: List[str]
-) -> List[RenameResult]:
-    """Perform batch folder renaming and return results."""
+) -> Tuple[List[RenameResult], List[ErrorInfo]]:
+    """Perform batch folder renaming and return results and errors."""
     renamed = []
+    errors = []
 
     for old_path, new_path, old_name, new_name in dirs_to_rename:
         try:
@@ -460,26 +471,34 @@ def _rename_folders_batch(
             idx = dirnames.index(old_name)
             dirnames[idx] = new_name
         except Exception as e:
-            print(f"Error renaming {old_path} to {new_path}: {e}")
+            error_msg = f"Error renaming {old_path} to {new_path}: {e}"
+            print(error_msg)
+            errors.append(ErrorInfo(str(old_path), "folder_rename", str(e)))
 
-    return renamed
+    return renamed, errors
 
 
 def _process_files_in_directory(
     dirpath: str, filenames: List[str]
-) -> List[RenameResult]:
+) -> Tuple[List[RenameResult], List[ErrorInfo]]:
     """Process and rename media files in a directory."""
     renamed = []
+    errors = []
     current_dir_name = Path(dirpath).name
 
     for filename in filenames:
         file_path = Path(dirpath) / filename
-        result = rename_media_file(file_path, current_dir_name)
-        if result:
-            renamed.append(RenameResult(*result))
-            print(f"Renamed file: {result[0]} -> {result[1]}")
+        try:
+            result = rename_media_file(file_path, current_dir_name)
+            if result:
+                renamed.append(RenameResult(*result))
+                print(f"Renamed file: {result[0]} -> {result[1]}")
+        except Exception as e:
+            error_msg = f"Error processing file {file_path}: {e}"
+            print(error_msg)
+            errors.append(ErrorInfo(str(file_path), "file_rename", str(e)))
 
-    return renamed
+    return renamed, errors
 
 
 def rename_folders(root_path: str) -> Dict[str, List[Tuple[str, str]]]:
@@ -504,7 +523,7 @@ def rename_folders(root_path: str) -> Dict[str, List[Tuple[str, str]]]:
     if not root_path.is_dir():
         raise ValueError(f"Path is not a directory: {root_path}")
 
-    stats = RenameStats(folders=[], files=[])
+    stats = RenameStats(folders=[], files=[], errors=[])
 
     # Walk the directory tree from top to bottom
     for dirpath, dirnames, filenames in os.walk(root_path, topdown=True):
@@ -514,14 +533,16 @@ def rename_folders(root_path: str) -> Dict[str, List[Tuple[str, str]]]:
 
         # Process folders
         dirs_to_rename = _process_folders_in_directory(dirpath, dirnames)
-        renamed_folders = _rename_folders_batch(dirs_to_rename, dirnames)
+        renamed_folders, folder_errors = _rename_folders_batch(dirs_to_rename, dirnames)
         stats.folders.extend(renamed_folders)
+        stats.errors.extend(folder_errors)
 
         # Process files
-        renamed_files = _process_files_in_directory(dirpath, filenames)
+        renamed_files, file_errors = _process_files_in_directory(dirpath, filenames)
         stats.files.extend(renamed_files)
+        stats.errors.extend(file_errors)
 
-    return stats.to_dict()
+    return stats
 
 
 def _dry_run_folders(root_path: Path) -> Tuple[int, int]:
@@ -572,6 +593,57 @@ def _dry_run_folders(root_path: Path) -> Tuple[int, int]:
     return folder_count, file_count
 
 
+def _write_error_log(errors: List[ErrorInfo], log_path: Path) -> None:
+    """
+    Write errors to a log file.
+
+    Args:
+        errors: List of ErrorInfo objects
+        log_path: Path to the error log file
+    """
+    if not errors:
+        # Remove log file if it exists and there are no errors
+        if log_path.exists():
+            log_path.unlink()
+        return
+
+    try:
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write("Media Sorter - Error Log\n")
+            f.write("=" * 80 + "\n\n")
+            for error in errors:
+                f.write(f"Type: {error.error_type}\n")
+                f.write(f"Path: {error.path}\n")
+                f.write(f"Error: {error.error_message}\n")
+                f.write("-" * 80 + "\n")
+    except Exception as e:
+        print(f"Warning: Could not write error log: {e}")
+
+
+def _display_error_summary(errors: List[ErrorInfo]) -> None:
+    """
+    Display error summary to console.
+
+    Args:
+        errors: List of ErrorInfo objects
+    """
+    if not errors:
+        return
+
+    print("\n" + "=" * 80)
+    print(f"ERRORS ENCOUNTERED: {len(errors)}")
+    print("=" * 80)
+
+    for i, error in enumerate(errors, 1):
+        print(f"\n{i}. {error.error_type.replace('_', ' ').title()}")
+        print(f"   Path: {error.path}")
+        print(f"   Error: {error.error_message}")
+
+    print("\n" + "=" * 80)
+    print("Error details have been saved to: error.log")
+    print("=" * 80)
+
+
 def main() -> int:
     """Main entry point for the script."""
     parser = argparse.ArgumentParser(
@@ -599,9 +671,21 @@ def main() -> int:
             print(f"\nTotal folders that would be renamed: {folder_count}")
             print(f"Total files that would be renamed: {file_count}")
         else:
-            result = rename_folders(str(root_path))
-            print(f"\nTotal folders renamed: {len(result['folders'])}")
-            print(f"Total files renamed: {len(result['files'])}")
+            stats = rename_folders(str(root_path))
+            print(f"\nTotal folders renamed: {len(stats.folders)}")
+            print(f"Total files renamed: {len(stats.files)}")
+
+            # Handle errors
+            if stats.errors:
+                error_log_path = root_path / "error.log"
+                _write_error_log(stats.errors, error_log_path)
+                _display_error_summary(stats.errors)
+                return 1  # Exit with error code if there were errors
+            else:
+                # Clean up error log if it exists and there are no errors
+                error_log_path = root_path / "error.log"
+                if error_log_path.exists():
+                    error_log_path.unlink()
 
         return 0
     except Exception as e:

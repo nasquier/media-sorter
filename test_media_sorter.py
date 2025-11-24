@@ -271,7 +271,7 @@ class TestRenameFolders:
         result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(result["folders"]) == 1
+        assert len(result.folders) == 1
         assert (Path(self.test_dir) / "20230115_my-photos").exists()
         assert not test_folder.exists()
 
@@ -287,7 +287,7 @@ class TestRenameFolders:
         result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(result["folders"]) == 2
+        assert len(result.folders) == 2
         assert (Path(self.test_dir) / "2023_vacation").exists()
         assert (Path(self.test_dir) / "2023_vacation" / "20230115_beach-day").exists()
 
@@ -301,7 +301,7 @@ class TestRenameFolders:
         result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(result["folders"]) == 0
+        assert len(result.folders) == 0
         assert test_folder.exists()
 
     def test_folder_without_date(self):
@@ -314,7 +314,7 @@ class TestRenameFolders:
         result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(result["folders"]) == 1
+        assert len(result.folders) == 1
         assert (Path(self.test_dir) / "my-photos").exists()
         assert not test_folder.exists()
 
@@ -330,7 +330,7 @@ class TestRenameFolders:
         result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(result["folders"]) == 2
+        assert len(result.folders) == 2
         assert (Path(self.test_dir) / "20230115_photos").exists()
         assert (Path(self.test_dir) / "20230220_videos").exists()
 
@@ -344,7 +344,7 @@ class TestRenameFolders:
         result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(result["folders"]) == 1
+        assert len(result.folders) == 1
         assert (Path(self.test_dir) / "20230115").exists()
         assert not test_folder.exists()
 
@@ -358,7 +358,7 @@ class TestRenameFolders:
         result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(result["folders"]) == 1
+        assert len(result.folders) == 1
         assert (Path(self.test_dir) / "202301_january-photos").exists()
         assert not test_folder.exists()
 
@@ -372,7 +372,7 @@ class TestRenameFolders:
         result = rename_folders(self.test_dir)
 
         # Check results
-        assert len(result["folders"]) == 1
+        assert len(result.folders) == 1
         assert (Path(self.test_dir) / "2023_annual-report").exists()
         assert not test_folder.exists()
 
@@ -505,12 +505,12 @@ class TestMediaFileRenaming:
         result = rename_folders(self.test_dir)
 
         # Check folder was renamed
-        assert len(result["folders"]) == 1
+        assert len(result.folders) == 1
         renamed_folder = Path(self.test_dir) / "202305_holiday-in-spain"
         assert renamed_folder.exists()
 
         # Check files were renamed
-        assert len(result["files"]) == 2
+        assert len(result.files) == 2
         assert (renamed_folder / "202305_holiday-in-spain.jpg").exists()
         assert (renamed_folder / "202305_holiday-in-spain_001.jpg").exists()
 
