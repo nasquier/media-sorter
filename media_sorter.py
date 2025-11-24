@@ -644,14 +644,11 @@ def _rename_folders_batch(
         try:
             old_path.rename(new_path)
             renamed.append(RenameResult(str(old_path), str(new_path)))
-            print(f"Renamed folder: {old_path} -> {new_path}")
 
             # Update dirnames list to reflect the rename
             idx = dirnames.index(old_name)
             dirnames[idx] = new_name
         except Exception as e:
-            error_msg = f"Error renaming {old_path} to {new_path}: {e}"
-            print(error_msg)
             errors.append(ErrorInfo(str(old_path), "folder_rename", str(e)))
 
     return renamed, errors
@@ -670,10 +667,7 @@ def _process_files_in_directory(
             result = rename_media_file(file_path)
             if result:
                 renamed.append(RenameResult(*result))
-                print(f"Renamed file: {result[0]} -> {result[1]}")
         except Exception as e:
-            error_msg = f"Error processing file {file_path}: {e}"
-            print(error_msg)
             errors.append(ErrorInfo(str(file_path), "file_rename", str(e)))
 
     return renamed, errors
@@ -703,23 +697,64 @@ def rename_folders(root_path: str) -> Dict[str, List[Tuple[str, str]]]:
 
     stats = RenameStats(folders=[], files=[], errors=[])
 
-    # Walk the directory tree from top to bottom
-    for dirpath, dirnames, filenames in os.walk(root_path, topdown=True):
+    # Count total items first
+    total_folders = 0
+    total_files = 0
+    for _, dirnames, filenames in os.walk(root_path, topdown=True):
+        total_folders += len(dirnames)
+        total_files += sum(
+            1 for f in filenames if Path(f).suffix.lower() in MEDIA_EXTENSIONS
+        )
+
+    total_items = total_folders + total_files
+    processed = 0
+    renamed_count = 0
+
+    # Walk the directory tree from bottom to top
+    for dirpath, dirnames, filenames in os.walk(root_path, topdown=False):
         # Sort for consistent behavior
         dirnames.sort()
         filenames.sort()
+
+        # Process files first
+        renamed_files, file_errors = _process_files_in_directory(dirpath, filenames)
+        stats.files.extend(renamed_files)
+        stats.errors.extend(file_errors)
+        renamed_count += len(renamed_files)
+        processed += sum(
+            1 for f in filenames if Path(f).suffix.lower() in MEDIA_EXTENSIONS
+        )
+
+        # Show progress
+        if total_items > 0:
+            percentage = (processed / total_items) * 100
+            untouched = processed - renamed_count
+            print(
+                f"\r{processed}/{total_items} ({percentage:.1f}%) items processed, {renamed_count} renamed, {untouched} untouched",
+                end="",
+                flush=True,
+            )
 
         # Process folders
         dirs_to_rename = _process_folders_in_directory(dirpath, dirnames)
         renamed_folders, folder_errors = _rename_folders_batch(dirs_to_rename, dirnames)
         stats.folders.extend(renamed_folders)
         stats.errors.extend(folder_errors)
+        renamed_count += len(renamed_folders)
+        processed += len(dirnames)
 
-        # Process files
-        renamed_files, file_errors = _process_files_in_directory(dirpath, filenames)
-        stats.files.extend(renamed_files)
-        stats.errors.extend(file_errors)
+        # Show progress
+        if total_items > 0:
+            percentage = (processed / total_items) * 100
+            untouched = processed - renamed_count
+            print(
+                f"\r{processed}/{total_items} ({percentage:.1f}%) items processed, {renamed_count} renamed, {untouched} untouched",
+                end="",
+                flush=True,
+            )
 
+    # Final newline
+    print()
     return stats
 
 
@@ -736,19 +771,22 @@ def _dry_run_folders(root_path: Path) -> Tuple[int, int]:
     folder_count = 0
     file_count = 0
 
-    for dirpath, dirnames, filenames in os.walk(root_path, topdown=True):
+    # Count total items first
+    total_folders = 0
+    total_files = 0
+    for _, dirnames, filenames in os.walk(root_path, topdown=True):
+        total_folders += len(dirnames)
+        total_files += sum(
+            1 for f in filenames if Path(f).suffix.lower() in MEDIA_EXTENSIONS
+        )
+
+    total_items = total_folders + total_files
+    processed = 0
+    would_rename = 0
+
+    for dirpath, dirnames, filenames in os.walk(root_path, topdown=False):
         dirnames.sort()
         filenames.sort()
-
-        # Check folders
-        for dirname in dirnames:
-            date_str, title = parse_folder_name(dirname)
-            new_name = format_folder_name(date_str, title)
-            if should_rename(dirname, new_name):
-                old_path = Path(dirpath) / dirname
-                new_path = Path(dirpath) / new_name
-                print(f"Would rename folder: {old_path} -> {new_path}")
-                folder_count += 1
 
         # Check files
         current_dir_name = Path(dirpath).name
@@ -764,10 +802,41 @@ def _dry_run_folders(root_path: Path) -> Tuple[int, int]:
                 )
 
                 if filename != new_filename:
-                    new_path = file_path.parent / new_filename
-                    print(f"Would rename file: {file_path} -> {new_path}")
                     file_count += 1
+                    would_rename += 1
+                processed += 1
 
+                # Show progress
+                if total_items > 0:
+                    percentage = (processed / total_items) * 100
+                    untouched = processed - would_rename
+                    print(
+                        f"\r{processed}/{total_items} ({percentage:.1f}%) items checked, {would_rename} would be renamed, {untouched} would stay untouched",
+                        end="",
+                        flush=True,
+                    )
+
+        # Check folders
+        for dirname in dirnames:
+            date_str, title = parse_folder_name(dirname)
+            new_name = format_folder_name(date_str, title)
+            if should_rename(dirname, new_name):
+                folder_count += 1
+                would_rename += 1
+            processed += 1
+
+            # Show progress
+            if total_items > 0:
+                percentage = (processed / total_items) * 100
+                untouched = processed - would_rename
+                print(
+                    f"\r{processed}/{total_items} ({percentage:.1f}%) items checked, {would_rename} would be renamed, {untouched} would stay untouched",
+                    end="",
+                    flush=True,
+                )
+
+    # Final newline
+    print()
     return folder_count, file_count
 
 
