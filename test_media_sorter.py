@@ -419,7 +419,7 @@ class TestMediaFileRenaming:
         test_file.write_bytes(b"fake image data")
 
         # Rename the file
-        result = rename_media_file(test_file, "202305_holiday-in-spain")
+        result = rename_media_file(test_file)
 
         # Check results
         assert result is not None
@@ -439,7 +439,7 @@ class TestMediaFileRenaming:
         for i in range(3):
             test_file = test_folder / f"photo{i}.jpg"
             test_file.write_bytes(b"fake image data")
-            result = rename_media_file(test_file, "202305_holiday-in-spain")
+            result = rename_media_file(test_file)
             if result:
                 files_created.append(result[1])
 
@@ -461,7 +461,7 @@ class TestMediaFileRenaming:
         test_file.write_text("test content")
 
         # Try to rename the file
-        result = rename_media_file(test_file, "test-folder")
+        result = rename_media_file(test_file)
 
         # Check results - file should not be renamed
         assert result is None
@@ -548,7 +548,7 @@ class TestMediaFileRenaming:
         assert fmt == "%Y:%m:%d %H:%M:%S"
 
         # Rename the file
-        result = rename_media_file(test_file, "202305_holiday-in-spain")
+        result = rename_media_file(test_file)
 
         # Check results - should be renamed with datetime and title only
         assert result is not None
@@ -569,7 +569,7 @@ class TestMediaFileRenaming:
         test_file.write_bytes(b"fake video data")
 
         # Rename the file
-        result = rename_media_file(test_file, "202401_winter-trip")
+        result = rename_media_file(test_file)
 
         # Check results - should be renamed with parent directory name (no metadata)
         assert result is not None
@@ -757,7 +757,7 @@ class TestPartialExifDatetime:
         img.save(test_file, exif=exif_data)
 
         # Rename the file
-        result = rename_media_file(test_file, "202305_vacation")
+        result = rename_media_file(test_file)
 
         # Check results - should NOT include seconds (no zero-padding)
         assert result is not None
@@ -881,7 +881,7 @@ class TestSignalWhatsAppFilenames:
         img.save(test_file)
 
         # Rename the file
-        result = rename_media_file(test_file, "202305-photos")
+        result = rename_media_file(test_file)
 
         # Should be renamed using datetime from filename, with title extracted from folder
         assert result is not None
@@ -916,7 +916,7 @@ class TestSignalWhatsAppFilenames:
         img.save(test_file)
 
         # Rename the file
-        result = rename_media_file(test_file, "202305-vacation")
+        result = rename_media_file(test_file)
 
         # Should be renamed using date from filename (time defaults to 00:00:00)
         # with title extracted from folder (just "vacation")
@@ -952,7 +952,7 @@ class TestSignalWhatsAppFilenames:
         img.save(test_file, exif=exif_data)
 
         # Rename the file
-        result = rename_media_file(test_file, "202305-trip")
+        result = rename_media_file(test_file)
 
         # Should use EXIF date (2023-06-10), not filename date (2023-05-15)
         # with title extracted from folder (just "trip")
@@ -973,7 +973,7 @@ class TestSignalWhatsAppFilenames:
         test_file.write_bytes(b"fake video data")
 
         # Rename the file
-        result = rename_media_file(test_file, "202312-videos")
+        result = rename_media_file(test_file)
 
         # Should be renamed using date from filename
         # with title extracted from folder (just "videos")
@@ -1011,7 +1011,7 @@ class TestExifWritingFromFolderDate:
         assert get_media_file_datetime(test_file) is None
 
         # Rename the file
-        result = rename_media_file(test_file, "20230515_vacation")
+        result = rename_media_file(test_file)
 
         # Should be renamed and EXIF should be written
         assert result is not None
@@ -1042,7 +1042,7 @@ class TestExifWritingFromFolderDate:
         assert get_media_file_datetime(test_file) is None
 
         # Rename the file
-        result = rename_media_file(test_file, "202305_photos")
+        result = rename_media_file(test_file)
 
         # Should be renamed and EXIF should be written
         assert result is not None
@@ -1073,7 +1073,7 @@ class TestExifWritingFromFolderDate:
         assert get_media_file_datetime(test_file) is None
 
         # Rename the file
-        result = rename_media_file(test_file, "2023_summer")
+        result = rename_media_file(test_file)
 
         # Should be renamed and EXIF should be written
         assert result is not None
@@ -1104,7 +1104,7 @@ class TestExifWritingFromFolderDate:
         assert get_media_file_datetime(test_file) is None
 
         # Rename the file
-        result = rename_media_file(test_file, "2023-05-20 Trip")
+        result = rename_media_file(test_file)
 
         # Should be renamed and EXIF should be written
         assert result is not None
@@ -1142,7 +1142,7 @@ class TestExifWritingFromFolderDate:
         assert dt_info_before[0].day == 10
 
         # Rename the file
-        result = rename_media_file(test_file, "20230515_vacation")
+        result = rename_media_file(test_file)
 
         # Should be renamed using existing EXIF, not folder date
         assert result is not None
@@ -1168,7 +1168,7 @@ class TestExifWritingFromFolderDate:
         test_file.write_bytes(b"fake video data")
 
         # Rename the file
-        result = rename_media_file(test_file, "20230515_vacation")
+        result = rename_media_file(test_file)
 
         # Should be renamed but no EXIF written (videos don't support EXIF)
         assert result is not None
@@ -1192,7 +1192,7 @@ class TestExifWritingFromFolderDate:
         assert get_media_file_datetime(test_file) is None
 
         # Rename the file
-        result = rename_media_file(test_file, "random-photos")
+        result = rename_media_file(test_file)
 
         # File should be renamed using folder name
         assert result is not None
@@ -1220,7 +1220,7 @@ class TestExifWritingFromFolderDate:
         assert get_media_file_datetime(test_file) is None
 
         # Rename the file
-        result = rename_media_file(test_file, "2020-2022_childhood")
+        result = rename_media_file(test_file)
 
         # File should be renamed
         assert result is not None

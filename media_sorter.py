@@ -546,20 +546,16 @@ def _create_base_filename(
     return parent_dir_name
 
 
-def rename_media_file(
-    file_path: Path, parent_dir_name: str
-) -> Optional[Tuple[str, str]]:
+def rename_media_file(file_path: Path) -> Optional[Tuple[str, str]]:
     """
     Rename a media file based on its metadata or parent directory name.
 
     Args:
         file_path: Path to the media file
-        parent_dir_name: Name of the parent directory
-
     Returns:
         tuple: (old_path, new_path) if renamed, None if not renamed
     """
-    file_path = Path(file_path)
+    parent_dir_name = file_path.parent.name
     extension = file_path.suffix.lower()
 
     if extension not in MEDIA_EXTENSIONS:
@@ -570,7 +566,7 @@ def rename_media_file(
     had_no_metadata = dt_info is None
 
     # If no EXIF metadata, try to extract from filename (Signal/WhatsApp)
-    if dt_info is None:
+    if had_no_metadata:
         dt_from_filename = _extract_datetime_from_filename(file_path.name)
         if dt_from_filename:
             # Use the extracted datetime with full precision format
@@ -591,14 +587,6 @@ def rename_media_file(
                         fmt = "%Y"
                     dt_info = (dt_from_folder, fmt)
 
-    # If file had no metadata but we found a date, write it to EXIF for images
-    # We'll write EXIF after renaming to ensure it's properly saved
-    should_write_exif = (
-        had_no_metadata
-        and dt_info is not None
-        and extension in {".jpg", ".jpeg", ".png", ".tiff", ".bmp"}
-    )
-
     base_name = _create_base_filename(dt_info, parent_dir_name)
 
     # Generate unique filename
@@ -612,6 +600,14 @@ def rename_media_file(
     except Exception as e:
         print(f"Error renaming {file_path} to {new_path}: {e}")
         return None
+
+    # If file had no metadata but we found a date, write it to EXIF for images
+    # We'll write EXIF after renaming to ensure it's properly saved
+    should_write_exif = (
+        had_no_metadata
+        and dt_info is not None
+        and extension in {".jpg", ".jpeg", ".png", ".tiff", ".bmp"}
+    )
 
     # Even if no rename needed, still write EXIF if required
     if should_write_exif:
@@ -667,12 +663,11 @@ def _process_files_in_directory(
     """Process and rename media files in a directory."""
     renamed = []
     errors = []
-    current_dir_name = Path(dirpath).name
 
     for filename in filenames:
         file_path = Path(dirpath) / filename
         try:
-            result = rename_media_file(file_path, current_dir_name)
+            result = rename_media_file(file_path)
             if result:
                 renamed.append(RenameResult(*result))
                 print(f"Renamed file: {result[0]} -> {result[1]}")
