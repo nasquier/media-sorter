@@ -137,7 +137,7 @@ def parse_folder_name(folder_name: str) -> Tuple[Optional[str], str]:
 
 def _sanitize_string(text: str) -> str:
     """
-    Remove special characters from text, keeping only alphanumeric and spaces.
+    Remove special characters, keeping alphanumeric (including Unicode), spaces.
 
     Args:
         text: Text to sanitize
@@ -145,9 +145,13 @@ def _sanitize_string(text: str) -> str:
     Returns:
         Sanitized text with special characters removed
     """
-    # Remove all special characters except spaces
-    # This includes: @, !, ?, :, ;, -, etc.
-    sanitized = re.sub(r"[^a-zA-Z0-9\s]", "", text)
+    # Remove all special characters except spaces and Unicode letters/numbers
+    # This preserves accented characters (é, à, ñ, ü, etc.)
+    # \w matches Unicode word characters (letters, digits, underscore)
+    # We replace underscores and keep spaces, letters, digits
+    sanitized = re.sub(r"[^\w\s]", "", text, flags=re.UNICODE)
+    # Remove underscores (which \w includes but we don't want)
+    sanitized = re.sub(r"_", "", sanitized)
     # Clean up multiple spaces and trim
     sanitized = re.sub(r"\s+", " ", sanitized).strip()
     return sanitized

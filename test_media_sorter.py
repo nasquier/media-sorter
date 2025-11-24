@@ -134,6 +134,36 @@ class TestSpecialCharacterSanitization:
         result = format_folder_name(date_str, title)
         assert result == "20230115_my-photos"
 
+    def test_french_accents_preserved(self):
+        """Test that French accented characters are preserved."""
+        date_str, title = parse_folder_name("2023-05 Vacances à la plage")
+        result = format_folder_name(date_str, title)
+        assert result == "202305_vacances-à-la-plage"
+
+    def test_spanish_accents_preserved(self):
+        """Test that Spanish accented characters are preserved."""
+        date_str, title = parse_folder_name("2024 Año nuevo")
+        result = format_folder_name(date_str, title)
+        assert result == "2024_año-nuevo"
+
+    def test_german_umlauts_preserved(self):
+        """Test that German umlauts are preserved."""
+        date_str, title = parse_folder_name("2023-08 München trip")
+        result = format_folder_name(date_str, title)
+        assert result == "202308_münchen-trip"
+
+    def test_mixed_unicode_and_special_chars(self):
+        """Test Unicode characters preserved while special chars removed."""
+        date_str, title = parse_folder_name("Noël en famille!")
+        result = format_folder_name(date_str, title)
+        assert result == "noël-en-famille"
+
+    def test_portuguese_accents_preserved(self):
+        """Test that Portuguese accented characters are preserved."""
+        date_str, title = parse_folder_name("São Paulo 2024")
+        result = format_folder_name(date_str, title)
+        assert result == "são-paulo-2024"
+
 
 class TestShouldRename:
     """Tests for should_rename function."""
