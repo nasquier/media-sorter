@@ -422,6 +422,58 @@ def _write_exif_datetime(file_path: Path, dt: datetime) -> bool:
         return False
 
 
+def _extract_datetime_from_folder_name(folder_name: str) -> Optional[datetime]:
+    """
+    Extract datetime from folder name.
+
+    Supports various date formats:
+    - YYYYMMDD_title or YYYYMMDD-title -> datetime(YYYY, MM, DD)
+    - YYYYMM_title or YYYYMM-title -> datetime(YYYY, MM, 1)
+    - YYYY_title or YYYY-title -> datetime(YYYY, 1, 1)
+    - YYYY-MM-DD Title -> datetime(YYYY, MM, DD)
+    - YYYY-MM Title -> datetime(YYYY, MM, 1)
+    - YYYY Title -> datetime(YYYY, 1, 1)
+
+    Year ranges (YYYY-YYYY) are not supported and return None.
+
+    Args:
+        folder_name: The folder name to parse
+
+    Returns:
+        datetime object if date can be extracted, None otherwise
+    """
+    date_str, _ = parse_folder_name(folder_name)
+
+    if not date_str:
+        return None
+
+    # Skip year ranges (e.g., "2020-2022")
+    if "-" in date_str and len(date_str) == 9:  # Format: YYYY-YYYY
+        return None
+
+    # Remove any remaining hyphens from year ranges
+    date_str = date_str.replace("-", "")
+
+    # Parse based on length
+    try:
+        if len(date_str) == 8:  # YYYYMMDD
+            year = int(date_str[0:4])
+            month = int(date_str[4:6])
+            day = int(date_str[6:8])
+            return datetime(year, month, day)
+        elif len(date_str) == 6:  # YYYYMM
+            year = int(date_str[0:4])
+            month = int(date_str[4:6])
+            return datetime(year, month, 1)
+        elif len(date_str) == 4:  # YYYY
+            year = int(date_str)
+            return datetime(year, 1, 1)
+    except (ValueError, TypeError):
+        pass
+
+    return None
+
+
 def get_media_file_datetime(file_path: Path) -> Optional[Tuple[datetime, str]]:
     """
     Extract datetime from media file EXIF metadata.
@@ -515,16 +567,37 @@ def rename_media_file(
 
     # Try to extract datetime from metadata
     dt_info = get_media_file_datetime(file_path)
+    had_no_metadata = dt_info is None
 
     # If no EXIF metadata, try to extract from filename (Signal/WhatsApp)
     if dt_info is None:
         dt_from_filename = _extract_datetime_from_filename(file_path.name)
         if dt_from_filename:
-            # Write the datetime to EXIF metadata for images
-            if extension in {".jpg", ".jpeg", ".png", ".tiff", ".bmp"}:
-                _write_exif_datetime(file_path, dt_from_filename)
             # Use the extracted datetime with full precision format
             dt_info = (dt_from_filename, "%Y:%m:%d %H:%M:%S")
+        else:
+            # If still no datetime, try to extract from parent folder name
+            dt_from_folder = _extract_datetime_from_folder_name(parent_dir_name)
+            if dt_from_folder:
+                # Determine format based on folder date precision
+                date_str, _ = parse_folder_name(parent_dir_name)
+                if date_str:
+                    date_str_clean = date_str.replace("-", "")
+                    if len(date_str_clean) == 8:  # Full date
+                        fmt = "%Y:%m:%d"
+                    elif len(date_str_clean) == 6:  # Year+month
+                        fmt = "%Y:%m"
+                    else:  # Year only
+                        fmt = "%Y"
+                    dt_info = (dt_from_folder, fmt)
+
+    # If file had no metadata but we found a date, write it to EXIF for images
+    # We'll write EXIF after renaming to ensure it's properly saved
+    should_write_exif = (
+        had_no_metadata
+        and dt_info is not None
+        and extension in {".jpg", ".jpeg", ".png", ".tiff", ".bmp"}
+    )
 
     base_name = _create_base_filename(dt_info, parent_dir_name)
 
@@ -532,16 +605,18 @@ def rename_media_file(
     new_filename = generate_unique_filename(file_path.parent, base_name, extension)
     new_path = file_path.parent / new_filename
 
-    # Check if renaming is needed
-    if file_path.name == new_filename:
-        return None
-
     try:
-        file_path.rename(new_path)
-        return (str(file_path), str(new_path))
+        # Check if renaming is needed
+        if file_path.name != new_filename:
+            file_path.rename(new_path)
     except Exception as e:
         print(f"Error renaming {file_path} to {new_path}: {e}")
         return None
+
+    # Even if no rename needed, still write EXIF if required
+    if should_write_exif:
+        _write_exif_datetime(new_path, dt_info[0])
+    return (str(file_path), str(new_path))
 
 
 def _process_folders_in_directory(

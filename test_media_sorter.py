@@ -981,3 +981,252 @@ class TestSignalWhatsAppFilenames:
         expected_name = "20231225000000_videos.mp4"
         assert (test_folder / expected_name).exists()
         assert not test_file.exists()
+
+
+class TestExifWritingFromFolderDate:
+    """Test EXIF metadata writing when date is extracted from folder name."""
+
+    def setup_method(self):
+        """Create a temporary directory for tests."""
+        self.test_dir = tempfile.mkdtemp()
+
+    def teardown_method(self):
+        """Clean up the temporary directory."""
+        shutil.rmtree(self.test_dir)
+
+    def test_write_exif_from_full_date_folder(self):
+        """Test writing EXIF when file has no metadata and folder has full date."""
+        from media_sorter import rename_media_file, get_media_file_datetime
+        from PIL import Image
+
+        test_folder = Path(self.test_dir) / "20230515_vacation"
+        test_folder.mkdir()
+
+        # Create image without EXIF
+        img = Image.new("RGB", (100, 100), color="blue")
+        test_file = test_folder / "photo.jpg"
+        img.save(test_file)
+
+        # Verify no EXIF before
+        assert get_media_file_datetime(test_file) is None
+
+        # Rename the file
+        result = rename_media_file(test_file, "20230515_vacation")
+
+        # Should be renamed and EXIF should be written
+        assert result is not None
+        expected_name = "20230515_vacation.jpg"
+        renamed_file = test_folder / expected_name
+
+        # Verify EXIF was written
+        dt_info = get_media_file_datetime(renamed_file)
+        assert dt_info is not None
+        assert dt_info[0].year == 2023
+        assert dt_info[0].month == 5
+        assert dt_info[0].day == 15
+
+    def test_write_exif_from_year_month_folder(self):
+        """Test writing EXIF when folder has year-month date."""
+        from media_sorter import rename_media_file, get_media_file_datetime
+        from PIL import Image
+
+        test_folder = Path(self.test_dir) / "202305_photos"
+        test_folder.mkdir()
+
+        # Create image without EXIF
+        img = Image.new("RGB", (100, 100), color="green")
+        test_file = test_folder / "image.jpg"
+        img.save(test_file)
+
+        # Verify no EXIF before
+        assert get_media_file_datetime(test_file) is None
+
+        # Rename the file
+        result = rename_media_file(test_file, "202305_photos")
+
+        # Should be renamed and EXIF should be written
+        assert result is not None
+        expected_name = "202305_photos.jpg"
+        renamed_file = test_folder / expected_name
+
+        # Verify EXIF was written (defaults to first day of month)
+        dt_info = get_media_file_datetime(renamed_file)
+        assert dt_info is not None
+        assert dt_info[0].year == 2023
+        assert dt_info[0].month == 5
+        assert dt_info[0].day == 1
+
+    def test_write_exif_from_year_only_folder(self):
+        """Test writing EXIF when folder has year-only date."""
+        from media_sorter import rename_media_file, get_media_file_datetime
+        from PIL import Image
+
+        test_folder = Path(self.test_dir) / "2023_summer"
+        test_folder.mkdir()
+
+        # Create image without EXIF
+        img = Image.new("RGB", (100, 100), color="yellow")
+        test_file = test_folder / "pic.jpg"
+        img.save(test_file)
+
+        # Verify no EXIF before
+        assert get_media_file_datetime(test_file) is None
+
+        # Rename the file
+        result = rename_media_file(test_file, "2023_summer")
+
+        # Should be renamed and EXIF should be written
+        assert result is not None
+        expected_name = "2023_summer.jpg"
+        renamed_file = test_folder / expected_name
+
+        # Verify EXIF was written (defaults to Jan 1)
+        dt_info = get_media_file_datetime(renamed_file)
+        assert dt_info is not None
+        assert dt_info[0].year == 2023
+        assert dt_info[0].month == 1
+        assert dt_info[0].day == 1
+
+    def test_write_exif_from_unformatted_folder(self):
+        """Test writing EXIF when folder has unformatted date."""
+        from media_sorter import rename_media_file, get_media_file_datetime
+        from PIL import Image
+
+        test_folder = Path(self.test_dir) / "2023-05-20 Trip"
+        test_folder.mkdir()
+
+        # Create image without EXIF
+        img = Image.new("RGB", (100, 100), color="red")
+        test_file = test_folder / "snapshot.jpg"
+        img.save(test_file)
+
+        # Verify no EXIF before
+        assert get_media_file_datetime(test_file) is None
+
+        # Rename the file
+        result = rename_media_file(test_file, "2023-05-20 Trip")
+
+        # Should be renamed and EXIF should be written
+        assert result is not None
+        expected_name = "20230520_trip.jpg"
+        renamed_file = test_folder / expected_name
+
+        # Verify EXIF was written
+        dt_info = get_media_file_datetime(renamed_file)
+        assert dt_info is not None
+        assert dt_info[0].year == 2023
+        assert dt_info[0].month == 5
+        assert dt_info[0].day == 20
+
+    def test_no_exif_write_when_metadata_exists(self):
+        """Test that EXIF is NOT overwritten when file already has metadata."""
+        from media_sorter import rename_media_file, get_media_file_datetime
+        from PIL import Image
+
+        test_folder = Path(self.test_dir) / "20230515_vacation"
+        test_folder.mkdir()
+
+        # Create image WITH EXIF (different date than folder)
+        img = Image.new("RGB", (100, 100), color="purple")
+        exif_data = img.getexif()
+        exif_data[36867] = "2023:06:10 12:00:00"  # Different date
+
+        test_file = test_folder / "photo.jpg"
+        img.save(test_file, exif=exif_data)
+
+        # Verify EXIF exists before
+        dt_info_before = get_media_file_datetime(test_file)
+        assert dt_info_before is not None
+        assert dt_info_before[0].year == 2023
+        assert dt_info_before[0].month == 6
+        assert dt_info_before[0].day == 10
+
+        # Rename the file
+        result = rename_media_file(test_file, "20230515_vacation")
+
+        # Should be renamed using existing EXIF, not folder date
+        assert result is not None
+        expected_name = "20230610120000_vacation.jpg"
+        renamed_file = test_folder / expected_name
+
+        # Verify EXIF was NOT changed (still has June 10 date)
+        dt_info_after = get_media_file_datetime(renamed_file)
+        assert dt_info_after is not None
+        assert dt_info_after[0].year == 2023
+        assert dt_info_after[0].month == 6
+        assert dt_info_after[0].day == 10
+
+    def test_no_exif_write_for_video_files(self):
+        """Test that EXIF is not written to video files (not supported)."""
+        from media_sorter import rename_media_file
+
+        test_folder = Path(self.test_dir) / "20230515_vacation"
+        test_folder.mkdir()
+
+        # Create a fake video file
+        test_file = test_folder / "video.mp4"
+        test_file.write_bytes(b"fake video data")
+
+        # Rename the file
+        result = rename_media_file(test_file, "20230515_vacation")
+
+        # Should be renamed but no EXIF written (videos don't support EXIF)
+        assert result is not None
+        expected_name = "20230515_vacation.mp4"
+        assert (test_folder / expected_name).exists()
+
+    def test_no_exif_write_for_folder_without_date(self):
+        """Test that no EXIF is written when folder has no date."""
+        from media_sorter import rename_media_file, get_media_file_datetime
+        from PIL import Image
+
+        test_folder = Path(self.test_dir) / "random-photos"
+        test_folder.mkdir()
+
+        # Create image without EXIF
+        img = Image.new("RGB", (100, 100), color="pink")
+        test_file = test_folder / "photo.jpg"
+        img.save(test_file)
+
+        # Verify no EXIF before
+        assert get_media_file_datetime(test_file) is None
+
+        # Rename the file
+        result = rename_media_file(test_file, "random-photos")
+
+        # File should be renamed using folder name
+        assert result is not None
+        expected_name = "random-photos.jpg"
+        renamed_file = test_folder / expected_name
+
+        # Verify no EXIF was written (folder has no date)
+        dt_info = get_media_file_datetime(renamed_file)
+        assert dt_info is None
+
+    def test_no_exif_write_for_year_range_folder(self):
+        """Test that no EXIF is written when folder has year range."""
+        from media_sorter import rename_media_file, get_media_file_datetime
+        from PIL import Image
+
+        test_folder = Path(self.test_dir) / "2020-2022_childhood"
+        test_folder.mkdir()
+
+        # Create image without EXIF
+        img = Image.new("RGB", (100, 100), color="cyan")
+        test_file = test_folder / "old_photo.jpg"
+        img.save(test_file)
+
+        # Verify no EXIF before
+        assert get_media_file_datetime(test_file) is None
+
+        # Rename the file
+        result = rename_media_file(test_file, "2020-2022_childhood")
+
+        # File should be renamed
+        assert result is not None
+        expected_name = "2020-2022_childhood.jpg"
+        renamed_file = test_folder / expected_name
+
+        # Verify no EXIF was written (year ranges not supported)
+        dt_info = get_media_file_datetime(renamed_file)
+        assert dt_info is None
