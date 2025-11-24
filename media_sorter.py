@@ -226,10 +226,24 @@ def _extract_title_from_formatted(folder_name: str) -> Optional[str]:
     """
     Extract title from already formatted folder name.
 
-    Handles YYYYMMDD_title or YYYY-YYYY_title formats.
+    Handles YYYYMMDD_title, YYYYMMDD-title, YYYY-YYYY_title, or YYYY-YYYY-title formats.
+    Does NOT match unformatted dates like "2023-05-15 Title" (those have spaces).
     """
-    formatted_pattern = r"^(\d{4}(?:-\d{4})?|\d{6}|\d{8})_(.+)$"
+    # Check for unformatted date patterns first - these should NOT be matched
+    # Unformatted: "2023-05-15 Title" or "2020-2022 Title" (with spaces)
+    if re.match(r"^\d{4}-\d{2}-\d{2}\s", folder_name):
+        return None  # Unformatted date like "2023-05-15 Title"
+    if re.match(r"^\d{4}-\d{4}\s", folder_name):
+        return None  # Unformatted year range like "2020-2022 Title"
+
+    # Match formatted patterns:
+    # - YYYYMMDD-title or YYYYMMDD_title (e.g., "20230515-vacation")
+    # - YYYYMM-title or YYYYMM_title (e.g., "202305-photos")
+    # - YYYY-title or YYYY_title (e.g., "2023_summer")
+    # - YYYY-YYYY-title or YYYY-YYYY_title (e.g., "2020-2022_childhood")
+    formatted_pattern = r"^(\d{4}(?:-\d{4})?|\d{6}|\d{8})[_-](.+)$"
     match = re.match(formatted_pattern, folder_name)
+
     return match.group(2) if match else None
 
 
@@ -325,6 +339,89 @@ def _format_datetime_from_exif(dt: datetime, fmt: str) -> str:
     return dt.strftime(output_format)
 
 
+def _extract_datetime_from_filename(filename: str) -> Optional[datetime]:
+    """
+    Extract datetime from Signal or WhatsApp filename patterns.
+
+    Supported patterns:
+    - Signal: signal-YYYY-MM-DD-HH-MM-SS-randomtext.ext
+    - WhatsApp: IMG-YYYYMMDD-WAxxx.ext or VID-YYYYMMDD-WAxxx.ext
+
+    Args:
+        filename: The filename to parse
+
+    Returns:
+        datetime object if pattern matches, None otherwise
+    """
+    # Signal pattern: signal-2023-05-15-14-30-45-randomtext.ext
+    signal_pattern = r"signal-(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})"
+    match = re.match(signal_pattern, filename, re.IGNORECASE)
+    if match:
+        try:
+            year, month, day, hour, minute, second = map(int, match.groups())
+            return datetime(year, month, day, hour, minute, second)
+        except (ValueError, TypeError):
+            pass
+
+    # WhatsApp pattern: IMG-20230515-WA001.ext or VID-20230515-WA001.ext
+    whatsapp_pattern = r"(?:IMG|VID)-(\d{4})(\d{2})(\d{2})-WA"
+    match = re.match(whatsapp_pattern, filename, re.IGNORECASE)
+    if match:
+        try:
+            year, month, day = map(int, match.groups())
+            return datetime(year, month, day)
+        except (ValueError, TypeError):
+            pass
+
+    return None
+
+
+def _write_exif_datetime(file_path: Path, dt: datetime) -> bool:
+    """
+    Write datetime to image EXIF metadata.
+
+    Args:
+        file_path: Path to the image file
+        dt: datetime object to write
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        with Image.open(file_path) as image:
+            exif_data = image.getexif()
+
+            # Format datetime for EXIF
+            dt_str = dt.strftime("%Y:%m:%d %H:%M:%S")
+
+            # Find the tag IDs for datetime fields
+            datetime_original_tag = None
+            datetime_digitized_tag = None
+            datetime_tag = None
+
+            for tag_id, tag_name in ExifTags.TAGS.items():
+                if tag_name == "DateTimeOriginal":
+                    datetime_original_tag = tag_id
+                elif tag_name == "DateTimeDigitized":
+                    datetime_digitized_tag = tag_id
+                elif tag_name == "DateTime":
+                    datetime_tag = tag_id
+
+            # Write to all datetime tags
+            if datetime_original_tag:
+                exif_data[datetime_original_tag] = dt_str
+            if datetime_digitized_tag:
+                exif_data[datetime_digitized_tag] = dt_str
+            if datetime_tag:
+                exif_data[datetime_tag] = dt_str
+
+            # Save the image with updated EXIF
+            image.save(file_path, exif=exif_data)
+            return True
+    except Exception:
+        return False
+
+
 def get_media_file_datetime(file_path: Path) -> Optional[Tuple[datetime, str]]:
     """
     Extract datetime from media file EXIF metadata.
@@ -418,6 +515,17 @@ def rename_media_file(
 
     # Try to extract datetime from metadata
     dt_info = get_media_file_datetime(file_path)
+
+    # If no EXIF metadata, try to extract from filename (Signal/WhatsApp)
+    if dt_info is None:
+        dt_from_filename = _extract_datetime_from_filename(file_path.name)
+        if dt_from_filename:
+            # Write the datetime to EXIF metadata for images
+            if extension in {".jpg", ".jpeg", ".png", ".tiff", ".bmp"}:
+                _write_exif_datetime(file_path, dt_from_filename)
+            # Use the extracted datetime with full precision format
+            dt_info = (dt_from_filename, "%Y:%m:%d %H:%M:%S")
+
     base_name = _create_base_filename(dt_info, parent_dir_name)
 
     # Generate unique filename

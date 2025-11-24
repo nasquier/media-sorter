@@ -764,3 +764,220 @@ class TestPartialExifDatetime:
         expected_name = "202305201645_vacation.jpg"  # No seconds!
         assert (test_folder / expected_name).exists()
         assert not test_file.exists()
+
+
+class TestSignalWhatsAppFilenames:
+    """Test Signal and WhatsApp filename date extraction."""
+
+    def setup_method(self):
+        """Create a temporary directory for test files."""
+        self.test_dir = tempfile.mkdtemp()
+
+    def teardown_method(self):
+        """Clean up the temporary directory."""
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_extract_signal_filename_datetime(self):
+        """Test extracting datetime from Signal filename pattern."""
+        from media_sorter import _extract_datetime_from_filename
+        from datetime import datetime
+
+        # Signal pattern: signal-YYYY-MM-DD-HH-MM-SS-randomtext.ext
+        filename = "signal-2023-05-15-14-30-45-abc123.jpg"
+        dt = _extract_datetime_from_filename(filename)
+
+        assert dt is not None
+        assert dt == datetime(2023, 5, 15, 14, 30, 45)
+
+    def test_extract_whatsapp_img_filename_datetime(self):
+        """Test extracting datetime from WhatsApp IMG filename pattern."""
+        from media_sorter import _extract_datetime_from_filename
+        from datetime import datetime
+
+        # WhatsApp IMG pattern: IMG-YYYYMMDD-WAxxx.ext
+        filename = "IMG-20230520-WA001.jpg"
+        dt = _extract_datetime_from_filename(filename)
+
+        assert dt is not None
+        assert dt == datetime(2023, 5, 20, 0, 0, 0)
+
+    def test_extract_whatsapp_vid_filename_datetime(self):
+        """Test extracting datetime from WhatsApp VID filename pattern."""
+        from media_sorter import _extract_datetime_from_filename
+        from datetime import datetime
+
+        # WhatsApp VID pattern: VID-YYYYMMDD-WAxxx.ext
+        filename = "VID-20231225-WA999.mp4"
+        dt = _extract_datetime_from_filename(filename)
+
+        assert dt is not None
+        assert dt == datetime(2023, 12, 25, 0, 0, 0)
+
+    def test_extract_regular_filename_returns_none(self):
+        """Test that regular filenames return None."""
+        from media_sorter import _extract_datetime_from_filename
+
+        filenames = [
+            "IMG_1234.jpg",
+            "photo.jpg",
+            "DSC_5678.jpg",
+            "random-file.mp4",
+        ]
+
+        for filename in filenames:
+            dt = _extract_datetime_from_filename(filename)
+            assert dt is None, f"{filename} should return None"
+
+    def test_signal_filename_case_insensitive(self):
+        """Test that Signal pattern is case-insensitive."""
+        from media_sorter import _extract_datetime_from_filename
+        from datetime import datetime
+
+        filenames = [
+            "SIGNAL-2023-05-15-14-30-45-abc.jpg",
+            "Signal-2023-05-15-14-30-45-abc.jpg",
+            "signal-2023-05-15-14-30-45-abc.jpg",
+        ]
+
+        for filename in filenames:
+            dt = _extract_datetime_from_filename(filename)
+            assert dt == datetime(2023, 5, 15, 14, 30, 45)
+
+    def test_whatsapp_filename_case_insensitive(self):
+        """Test that WhatsApp pattern is case-insensitive."""
+        from media_sorter import _extract_datetime_from_filename
+        from datetime import datetime
+
+        filenames = [
+            "IMG-20230520-WA001.jpg",
+            "img-20230520-wa001.jpg",
+            "VID-20231225-WA999.mp4",
+            "vid-20231225-wa999.mp4",
+        ]
+
+        expected = [
+            datetime(2023, 5, 20),
+            datetime(2023, 5, 20),
+            datetime(2023, 12, 25),
+            datetime(2023, 12, 25),
+        ]
+
+        for filename, expected_dt in zip(filenames, expected):
+            dt = _extract_datetime_from_filename(filename)
+            assert dt == expected_dt
+
+    def test_rename_signal_file_without_exif(self):
+        """Test renaming a Signal file that has no EXIF metadata."""
+        from media_sorter import rename_media_file
+        from PIL import Image
+
+        test_folder = Path(self.test_dir) / "202305-photos"
+        test_folder.mkdir()
+
+        # Create image without EXIF
+        img = Image.new("RGB", (100, 100), color="blue")
+        test_file = test_folder / "signal-2023-05-15-14-30-45-abc123.jpg"
+        img.save(test_file)
+
+        # Rename the file
+        result = rename_media_file(test_file, "202305-photos")
+
+        # Should be renamed using datetime from filename, with title extracted from folder
+        assert result is not None
+        expected_name = "20230515143045_photos.jpg"
+        assert (test_folder / expected_name).exists()
+        assert not test_file.exists()
+
+        # Verify EXIF was written
+        from media_sorter import get_media_file_datetime
+
+        renamed_file = test_folder / expected_name
+        dt_info = get_media_file_datetime(renamed_file)
+        assert dt_info is not None
+        assert dt_info[0].year == 2023
+        assert dt_info[0].month == 5
+        assert dt_info[0].day == 15
+        assert dt_info[0].hour == 14
+        assert dt_info[0].minute == 30
+        assert dt_info[0].second == 45
+
+    def test_rename_whatsapp_file_without_exif(self):
+        """Test renaming a WhatsApp file that has no EXIF metadata."""
+        from media_sorter import rename_media_file
+        from PIL import Image
+
+        test_folder = Path(self.test_dir) / "202305-vacation"
+        test_folder.mkdir()
+
+        # Create image without EXIF
+        img = Image.new("RGB", (100, 100), color="green")
+        test_file = test_folder / "IMG-20230520-WA001.jpg"
+        img.save(test_file)
+
+        # Rename the file
+        result = rename_media_file(test_file, "202305-vacation")
+
+        # Should be renamed using date from filename (time defaults to 00:00:00)
+        # with title extracted from folder (just "vacation")
+        assert result is not None
+        expected_name = "20230520000000_vacation.jpg"
+        assert (test_folder / expected_name).exists()
+        assert not test_file.exists()
+
+        # Verify EXIF was written
+        from media_sorter import get_media_file_datetime
+
+        renamed_file = test_folder / expected_name
+        dt_info = get_media_file_datetime(renamed_file)
+        assert dt_info is not None
+        assert dt_info[0].year == 2023
+        assert dt_info[0].month == 5
+        assert dt_info[0].day == 20
+
+    def test_signal_file_with_existing_exif_uses_exif(self):
+        """Test that Signal files with existing EXIF use the EXIF data."""
+        from media_sorter import rename_media_file
+        from PIL import Image
+
+        test_folder = Path(self.test_dir) / "202305-trip"
+        test_folder.mkdir()
+
+        # Create image with EXIF (different from filename date)
+        img = Image.new("RGB", (100, 100), color="red")
+        exif_data = img.getexif()
+        exif_data[36867] = "2023:06:10 12:00:00"  # Different date than filename
+
+        test_file = test_folder / "signal-2023-05-15-14-30-45-abc.jpg"
+        img.save(test_file, exif=exif_data)
+
+        # Rename the file
+        result = rename_media_file(test_file, "202305-trip")
+
+        # Should use EXIF date (2023-06-10), not filename date (2023-05-15)
+        # with title extracted from folder (just "trip")
+        assert result is not None
+        expected_name = "20230610120000_trip.jpg"
+        assert (test_folder / expected_name).exists()
+        assert not test_file.exists()
+
+    def test_rename_whatsapp_video_without_metadata(self):
+        """Test renaming a WhatsApp video file (can't write EXIF to video)."""
+        from media_sorter import rename_media_file
+
+        test_folder = Path(self.test_dir) / "202312-videos"
+        test_folder.mkdir()
+
+        # Create a fake video file
+        test_file = test_folder / "VID-20231225-WA999.mp4"
+        test_file.write_bytes(b"fake video data")
+
+        # Rename the file
+        result = rename_media_file(test_file, "202312-videos")
+
+        # Should be renamed using date from filename
+        # with title extracted from folder (just "videos")
+        assert result is not None
+        expected_name = "20231225000000_videos.mp4"
+        assert (test_folder / expected_name).exists()
+        assert not test_file.exists()
