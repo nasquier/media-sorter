@@ -230,9 +230,11 @@ def _extract_title_from_formatted(folder_name: str) -> Optional[str]:
     Does NOT match unformatted dates like "2023-05-15 Title" (those have spaces).
     """
     # Check for unformatted date patterns first - these should NOT be matched
-    # Unformatted: "2023-05-15 Title" or "2020-2022 Title" (with spaces)
+    # Unformatted: "2023-05-15 Title" or "2023-05 Title" or "2020-2022 Title" (with spaces)
     if re.match(r"^\d{4}-\d{2}-\d{2}\s", folder_name):
         return None  # Unformatted date like "2023-05-15 Title"
+    if re.match(r"^\d{4}-\d{2}\s", folder_name):
+        return None  # Unformatted date like "2023-05 Title"
     if re.match(r"^\d{4}-\d{4}\s", folder_name):
         return None  # Unformatted year range like "2020-2022 Title"
 
@@ -370,6 +372,16 @@ def _extract_datetime_from_filename(filename: str) -> Optional[datetime]:
         try:
             year, month, day = map(int, match.groups())
             return datetime(year, month, day)
+        except (ValueError, TypeError):
+            pass
+
+    # Other pattern: IMG-20230515-WA001.ext or VID-20230515-WA001.ext
+    pattern = r"IMG_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})"
+    match = re.match(pattern, filename, re.IGNORECASE)
+    if match:
+        try:
+            year, month, day, hour, minute, second = map(int, match.groups())
+            return datetime(year, month, day, hour, minute, second)
         except (ValueError, TypeError):
             pass
 
@@ -593,26 +605,34 @@ def rename_media_file(file_path: Path) -> Optional[Tuple[str, str]]:
     new_filename = generate_unique_filename(file_path.parent, base_name, extension)
     new_path = file_path.parent / new_filename
 
-    try:
-        # Check if renaming is needed
-        if file_path.name != new_filename:
-            file_path.rename(new_path)
-    except Exception as e:
-        print(f"Error renaming {file_path} to {new_path}: {e}")
-        return None
+    # Check if renaming is needed
+    needs_rename = file_path.name != new_filename
 
-    # If file had no metadata but we found a date, write it to EXIF for images
-    # We'll write EXIF after renaming to ensure it's properly saved
+    if needs_rename:
+        try:
+            file_path.rename(new_path)
+        except Exception as e:
+            print(f"Error renaming {file_path} to {new_path}: {e}")
+            return None
+
+    # If file had no metadata but we found a date from filename pattern (Signal/WhatsApp),
+    # write it to EXIF for images
+    dt_from_filename = _extract_datetime_from_filename(file_path.name)
     should_write_exif = (
         had_no_metadata
-        and dt_info is not None
+        and dt_from_filename is not None
         and extension in {".jpg", ".jpeg", ".png", ".tiff", ".bmp"}
     )
 
-    # Even if no rename needed, still write EXIF if required
+    # Write EXIF if required (whether renamed or not)
     if should_write_exif:
-        _write_exif_datetime(new_path, dt_info[0])
-    return (str(file_path), str(new_path))
+        _write_exif_datetime(new_path, dt_from_filename)
+
+    # Only return result if file was actually renamed
+    if needs_rename:
+        return (str(file_path), str(new_path))
+    else:
+        return None
 
 
 def _process_folders_in_directory(

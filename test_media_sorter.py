@@ -493,18 +493,20 @@ class TestMediaFileRenaming:
 
     def test_integrated_folder_and_file_rename(self):
         """Test that both folders and files are renamed together."""
+        from media_sorter import rename_folders
+        from PIL import Image
+
         # Create a test folder with files
         test_folder = Path(self.test_dir) / "2023-05 Holiday in Spain"
         test_folder.mkdir()
 
-        # Create some simple image files
+        # Create some real image files without EXIF
         for i in range(2):
+            img = Image.new("RGB", (100, 100), color="blue")
             test_file = test_folder / f"IMG_{i:04d}.jpg"
-            test_file.write_bytes(b"fake image data")
+            img.save(test_file)
 
         # Run rename_folders (which should rename both folders and files)
-        from media_sorter import rename_folders
-
         result = rename_folders(self.test_dir)
 
         # Check folder was renamed
@@ -814,6 +816,33 @@ class TestSignalWhatsAppFilenames:
         assert dt is not None
         assert dt == datetime(2023, 12, 25, 0, 0, 0)
 
+    def test_extract_img_underscore_datetime(self):
+        """Test extracting datetime from IMG_YYYYMMDD_HHMMSS pattern."""
+        from media_sorter import _extract_datetime_from_filename
+        from datetime import datetime
+
+        # Pattern: IMG_YYYYMMDD_HHMMSS
+        filename = "IMG_20230515_143045.jpg"
+        dt = _extract_datetime_from_filename(filename)
+
+        assert dt is not None
+        assert dt == datetime(2023, 5, 15, 14, 30, 45)
+
+    def test_extract_img_underscore_datetime_case_insensitive(self):
+        """Test that IMG_YYYYMMDD_HHMMSS pattern is case-insensitive."""
+        from media_sorter import _extract_datetime_from_filename
+        from datetime import datetime
+
+        filenames = [
+            "IMG_20230515_143045.jpg",
+            "img_20230515_143045.jpg",
+            "Img_20230515_143045.jpg",
+        ]
+
+        for filename in filenames:
+            dt = _extract_datetime_from_filename(filename)
+            assert dt == datetime(2023, 5, 15, 14, 30, 45)
+
     def test_extract_regular_filename_returns_none(self):
         """Test that regular filenames return None."""
         from media_sorter import _extract_datetime_from_filename
@@ -995,7 +1024,7 @@ class TestExifWritingFromFolderDate:
         shutil.rmtree(self.test_dir)
 
     def test_write_exif_from_full_date_folder(self):
-        """Test writing EXIF when file has no metadata and folder has full date."""
+        """Test that EXIF is NOT written for folder-based dates (to preserve precision)."""
         from media_sorter import rename_media_file, get_media_file_datetime
         from PIL import Image
 
@@ -1013,20 +1042,17 @@ class TestExifWritingFromFolderDate:
         # Rename the file
         result = rename_media_file(test_file)
 
-        # Should be renamed and EXIF should be written
+        # Should be renamed but EXIF should NOT be written
         assert result is not None
         expected_name = "20230515_vacation.jpg"
         renamed_file = test_folder / expected_name
 
-        # Verify EXIF was written
+        # Verify EXIF was NOT written (folder dates don't get EXIF to preserve precision)
         dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is not None
-        assert dt_info[0].year == 2023
-        assert dt_info[0].month == 5
-        assert dt_info[0].day == 15
+        assert dt_info is None
 
     def test_write_exif_from_year_month_folder(self):
-        """Test writing EXIF when folder has year-month date."""
+        """Test that EXIF is NOT written for year-month folder dates."""
         from media_sorter import rename_media_file, get_media_file_datetime
         from PIL import Image
 
@@ -1044,20 +1070,17 @@ class TestExifWritingFromFolderDate:
         # Rename the file
         result = rename_media_file(test_file)
 
-        # Should be renamed and EXIF should be written
+        # Should be renamed but EXIF should NOT be written
         assert result is not None
         expected_name = "202305_photos.jpg"
         renamed_file = test_folder / expected_name
 
-        # Verify EXIF was written (defaults to first day of month)
+        # Verify EXIF was NOT written (preserving month precision)
         dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is not None
-        assert dt_info[0].year == 2023
-        assert dt_info[0].month == 5
-        assert dt_info[0].day == 1
+        assert dt_info is None
 
     def test_write_exif_from_year_only_folder(self):
-        """Test writing EXIF when folder has year-only date."""
+        """Test that EXIF is NOT written for year-only folder dates."""
         from media_sorter import rename_media_file, get_media_file_datetime
         from PIL import Image
 
@@ -1075,20 +1098,17 @@ class TestExifWritingFromFolderDate:
         # Rename the file
         result = rename_media_file(test_file)
 
-        # Should be renamed and EXIF should be written
+        # Should be renamed but EXIF should NOT be written
         assert result is not None
         expected_name = "2023_summer.jpg"
         renamed_file = test_folder / expected_name
 
-        # Verify EXIF was written (defaults to Jan 1)
+        # Verify EXIF was NOT written (preserving year precision)
         dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is not None
-        assert dt_info[0].year == 2023
-        assert dt_info[0].month == 1
-        assert dt_info[0].day == 1
+        assert dt_info is None
 
     def test_write_exif_from_unformatted_folder(self):
-        """Test writing EXIF when folder has unformatted date."""
+        """Test that EXIF is NOT written for unformatted folder dates."""
         from media_sorter import rename_media_file, get_media_file_datetime
         from PIL import Image
 
@@ -1106,17 +1126,14 @@ class TestExifWritingFromFolderDate:
         # Rename the file
         result = rename_media_file(test_file)
 
-        # Should be renamed and EXIF should be written
+        # Should be renamed but EXIF should NOT be written
         assert result is not None
         expected_name = "20230520_trip.jpg"
         renamed_file = test_folder / expected_name
 
-        # Verify EXIF was written
+        # Verify EXIF was NOT written (folder dates preserve precision)
         dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is not None
-        assert dt_info[0].year == 2023
-        assert dt_info[0].month == 5
-        assert dt_info[0].day == 20
+        assert dt_info is None
 
     def test_no_exif_write_when_metadata_exists(self):
         """Test that EXIF is NOT overwritten when file already has metadata."""
