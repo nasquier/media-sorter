@@ -375,8 +375,8 @@ def _extract_datetime_from_filename(filename: str) -> Optional[datetime]:
         except (ValueError, TypeError):
             pass
 
-    # Other pattern: IMG-20230515-WA001.ext or VID-20230515-WA001.ext
-    pattern = r"IMG_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})"
+    # Other pattern: IMG-20230515-143045.ext or VID-20230515-143045.ext
+    pattern = r"(?:IMG|VID)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})"
     match = re.match(pattern, filename, re.IGNORECASE)
     if match:
         try:
@@ -748,9 +748,8 @@ def rename_folders(root_path: str) -> Dict[str, List[Tuple[str, str]]]:
         # Show progress
         if total_items > 0:
             percentage = (processed / total_items) * 100
-            untouched = processed - renamed_count
             print(
-                f"\r{processed}/{total_items} ({percentage:.1f}%) items processed, {renamed_count} renamed, {untouched} untouched",
+                f"\rProcessing: {processed}/{total_items} ({percentage:.1f}%)",
                 end="",
                 flush=True,
             )
@@ -766,9 +765,8 @@ def rename_folders(root_path: str) -> Dict[str, List[Tuple[str, str]]]:
         # Show progress
         if total_items > 0:
             percentage = (processed / total_items) * 100
-            untouched = processed - renamed_count
             print(
-                f"\r{processed}/{total_items} ({percentage:.1f}%) items processed, {renamed_count} renamed, {untouched} untouched",
+                f"\rProcessing: {processed}/{total_items} ({percentage:.1f}%)",
                 end="",
                 flush=True,
             )
@@ -829,9 +827,8 @@ def _dry_run_folders(root_path: Path) -> Tuple[int, int]:
                 # Show progress
                 if total_items > 0:
                     percentage = (processed / total_items) * 100
-                    untouched = processed - would_rename
                     print(
-                        f"\r{processed}/{total_items} ({percentage:.1f}%) items checked, {would_rename} would be renamed, {untouched} would stay untouched",
+                        f"\rChecking: {processed}/{total_items} ({percentage:.1f}%)",
                         end="",
                         flush=True,
                     )
@@ -848,9 +845,8 @@ def _dry_run_folders(root_path: Path) -> Tuple[int, int]:
             # Show progress
             if total_items > 0:
                 percentage = (processed / total_items) * 100
-                untouched = processed - would_rename
                 print(
-                    f"\r{processed}/{total_items} ({percentage:.1f}%) items checked, {would_rename} would be renamed, {untouched} would stay untouched",
+                    f"\rChecking: {processed}/{total_items} ({percentage:.1f}%)",
                     end="",
                     flush=True,
                 )
