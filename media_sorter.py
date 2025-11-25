@@ -930,11 +930,13 @@ def main() -> int:
 
         if args.dry_run:
             print("Dry run - no actual changes will be made:")
+            # TODO: FIX COUNT
             folder_count, file_count = _dry_run_folders(root_path)
             print(f"\nTotal folders that would be renamed: {folder_count}")
             print(f"Total files that would be renamed: {file_count}")
         else:
             stats = rename_folders(str(root_path))
+            # TODO: FIX COUNT
             print(f"\nTotal folders renamed: {len(stats.folders)}")
             print(f"Total files renamed: {len(stats.files)}")
 

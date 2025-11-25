@@ -37,31 +37,31 @@ class MediaSorter:
         cls,
         folder_path: Path,
         directory_callable: Callable[[Path], bool] | None = None,
-        files_callable: Callable[[Path], bool] | None = None,
+        file_callable: Callable[[Path], bool] | None = None,
     ):
         items = os.listdir(folder_path)
         directories = [item for item in items if (folder_path / item).is_dir()]
         files = [item for item in items if (folder_path / item).is_file()]
         for directory in directories:
             cls.recursive_process(
-                folder_path / directory, directory_callable, files_callable
+                folder_path / directory, directory_callable, file_callable
             )
             if directory_callable:
                 directory_callable(folder_path / directory)
 
-        if files_callable:
+        if file_callable:
             for file in files:
-                files_callable(folder_path / file)
+                file_callable(folder_path / file)
 
     def walk_and_print_names(self):
         def print_item(file_path: Path):
-            print(f"{"Directory" if file_path.is_dir() else "File"}: {file_path.name}")
+            print(f"{"Directory" if file_path.is_dir() else "File"}: {file_path}")
             return True
 
         self.recursive_process(
             self.input_folder_path,
             directory_callable=print_item,
-            files_callable=print_item,
+            file_callable=print_item,
         )
 
 
