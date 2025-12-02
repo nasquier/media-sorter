@@ -1,11 +1,8 @@
 import argparse
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
-from datetime import datetime
-from typing import Optional, Tuple, Dict, List, Callable
-from PIL import Image, ExifTags
+from typing import Optional, Tuple
 
 # Supported media file extensions
 MEDIA_EXTENSIONS = {
@@ -24,45 +21,143 @@ MEDIA_EXTENSIONS = {
 
 
 class MediaSorter:
-    def __init__(self, input_folder_path: Path, dry_mode: bool = True):
+    def __init__(self, input_folder_path: Path, dry_mode: bool = False):
         self.input_folder_path = input_folder_path
         self.dry_mode = dry_mode
         self.n_files = 0
         self.n_folders = 0
         self.n_files_processed = 0
-        self.n_folders = 0
+        self.n_folders_processed = 0
+        self.n_total_items = 0
 
-    @classmethod
-    def recursive_process(
-        cls,
-        folder_path: Path,
-        directory_callable: Callable[[Path], bool] | None = None,
-        file_callable: Callable[[Path], bool] | None = None,
-    ):
-        items = os.listdir(folder_path)
-        directories = [item for item in items if (folder_path / item).is_dir()]
-        files = [item for item in items if (folder_path / item).is_file()]
-        for directory in directories:
-            cls.recursive_process(
-                folder_path / directory, directory_callable, file_callable
+        for _, dirnames, filenames in os.walk(input_folder_path, topdown=True):
+            self.n_folders += len(dirnames)
+            self.n_files += sum(
+                1 for f in filenames if Path(f).suffix.lower() in MEDIA_EXTENSIONS
             )
-            if directory_callable:
-                directory_callable(folder_path / directory)
 
-        if file_callable:
-            for file in files:
-                file_callable(folder_path / file)
+        self.n_total_items = self.n_files + self.n_folders
 
-    def walk_and_print_names(self):
-        def print_item(file_path: Path):
-            print(f"{"Directory" if file_path.is_dir() else "File"}: {file_path}")
-            return True
+    def recursive_renaming(
+        self,
+        folder_path: Path,
+    ):
+        # Rename folder
+        new_folder_path = self.rename_folder(folder_path)
 
-        self.recursive_process(
-            self.input_folder_path,
-            directory_callable=print_item,
-            file_callable=print_item,
+        # List folder items
+        items = os.listdir(new_folder_path)
+        folders = [item for item in items if (new_folder_path / item).is_dir()]
+        files = [item for item in items if (new_folder_path / item).is_file()]
+
+        # Recursive operation in child folders
+        for folder in folders:
+            self.recursive_renaming(new_folder_path / folder)
+
+        # Rename files in folder
+        for file in files:
+            self.rename_file(new_folder_path / file)
+
+    def rename_folder(self, folder_path: Path) -> Path:
+        """Rename folder based on date and title extracted from its name."""
+        # Parse folder name
+        folder_name = folder_path.name
+        date_str, title = self.parse_folder_name(folder_name)
+        formatted_title = title.replace(" ", "-").lower()
+
+        # Build new folder name
+        new_folder_name_array = []
+        if date_str:
+            new_folder_name_array.append(date_str)
+        if formatted_title:
+            new_folder_name_array.append(formatted_title)
+        new_folder_name = "_".join(new_folder_name_array)
+
+        # Print progress
+        self.n_folders_processed += 1
+        self.show_progress()
+        print(
+            f" - {'Renaming' if not self.dry_mode else 'Would rename'} folder: {folder_name} -> {new_folder_name}"
         )
+
+        # Rename folder if needed
+        if new_folder_name:
+            new_folder_path = folder_path.parent / new_folder_name
+            if new_folder_path != folder_path:
+                if not self.dry_mode:
+                    folder_path.rename(new_folder_path)
+                    return new_folder_path
+        return folder_path
+
+    def rename_file(self, file_path: Path):
+        return file_path
+
+    def parse_folder_name(
+        self, folder_name: str
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Parse folder name to extract date and title.
+
+        Date format: YYYY-MM-DD (month and day are optional) or YYYY-YYYY (year range)
+        Examples:
+            - "2023-01-15 My Photos" -> date: "20230115", title: "My Photos"
+            - "2023-01 Vacation" -> date: "202301", title: "Vacation"
+            - "2023 Summer" -> date: "2023", title: "Summer"
+            - "2020-2022 Childhood" -> date: "2020-2022", title: "Childhood"
+            - "2023" -> date: "2023", title: ""
+            - "My Photos" -> date: "", title: "My Photos"
+            - "20230115_my-photos" -> date: "20230115", title: "my-photos"
+            (already formatted)
+
+        Args:
+            folder_name: The original folder name
+
+        Returns:
+            tuple: (date_str, title) where date_str is formatted without dashes
+                and title is the remaining part
+        """
+        # First check if it's already in formatted form:
+        # YYYYMMDD_title or YYYYMM_title or YYYY_title or YYYY-YYYY_title
+        pattern = r"^(\d{4}(?:-\d{4}|\d{4}|\d{2})?)(?:_(.+))?$"
+        match = re.match(pattern, folder_name)
+        if match:
+            date_str, title = match.groups()
+            return date_str, title
+
+        # Check for year range: YYYY-YYYY optionally followed by space and title
+        pattern = r"(\d{4}-\d{4})(?:\s+(.*))?"
+        match = re.match(pattern, folder_name)
+        if match:
+            date_str, title = match.groups()
+            return date_str, title
+
+        # Pattern to match optional date at the start
+        # YYYY-MM-DD or YYYY-MM or YYYY optionally followed by space and title
+        pattern = r"^(\d{4})(?:-(\d{2}))(?:-(\d{2}))(?:\s(.+))?$"
+        match = re.match(pattern, folder_name)
+        if not match:
+            return "", folder_name
+
+        # Build date string from available components
+        year, month, day, title = match.groups()
+        date_str = year + (month or "") + (day or "")
+
+        # If no title provided after date, return "" for title
+        return date_str, title or ""
+
+    def show_progress(self):
+        """Display progress of processing."""
+        if self.n_total_items > 0:
+            percentage = (
+                (self.n_files_processed + self.n_folders_processed)
+                / self.n_total_items
+                * 100
+            )
+            print(
+                f"\rProcessing: {self.n_files_processed + self.n_folders_processed}/{self.n_total_items} ({percentage:.1f}%)",
+                end="",
+                flush=True,
+            )
 
 
 def main() -> int:
@@ -87,29 +182,7 @@ def main() -> int:
             return 1
 
         sorter = MediaSorter(root_path, dry_mode=args.dry_run)
-        sorter.walk_and_print_names()
-
-        # if args.dry_run:
-        #     print("Dry run - no actual changes will be made:")
-        #     # TODO: FIX COUNT
-        #     dry_run_folders(root_path)
-        # else:
-        #     stats = rename_folders(str(root_path))
-        #     # TODO: FIX COUNT
-        #     print(f"\nTotal folders renamed: {len(stats.folders)}")
-        #     print(f"Total files renamed: {len(stats.files)}")
-        #
-        # # Handle errors
-        # if stats.errors:
-        #     error_log_path = Path.cwd() / "error.log"
-        #     _write_error_log(stats.errors, error_log_path)
-        #     _display_error_summary(stats.errors)
-        #     return 1  # Exit with error code if there were errors
-        # else:
-        #     # Clean up error log if it exists and there are no errors
-        #     error_log_path = Path.cwd() / "error.log"
-        #     if error_log_path.exists():
-        #         error_log_path.unlink()
+        sorter.recursive_renaming(root_path)
 
         return 0
     except Exception as e:
