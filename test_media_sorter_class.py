@@ -1248,3 +1248,205 @@ class TestIntegration:
         # Verify both processed correctly
         assert (Path(self.test_dir) / "202305_may").exists()
         assert (Path(self.test_dir) / "202306_june").exists()
+
+
+class TestSpecialCharacterSanitization:
+    """Tests for special character sanitization in folder names."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_exclamation_mark_removed(self):
+        """Test that exclamation marks are removed from folder names."""
+        date_str, title = self.sorter.parse_folder_name("2023-05 Holiday in Spain!")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "202305_holiday-in-spain"
+
+    def test_at_symbol_removed(self):
+        """Test that @ symbols are removed from folder names."""
+        date_str, title = self.sorter.parse_folder_name("2023-08-10 CleanShot@2x")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "20230810_cleanshot2x"
+
+    def test_colon_removed(self):
+        """Test that colons are removed from folder names."""
+        date_str, title = self.sorter.parse_folder_name("2024 Photos: Summer")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "2024_photos-summer"
+
+    def test_multiple_exclamation_marks_removed(self):
+        """Test that multiple exclamation marks are removed."""
+        date_str, title = self.sorter.parse_folder_name("My Awesome Photos!!!")
+        result = self.sorter.format_folder_title(title)
+        assert result == "my-awesome-photos"
+
+    def test_parentheses_removed(self):
+        """Test that parentheses are removed from folder names."""
+        date_str, title = self.sorter.parse_folder_name("Trip (2023)")
+        result = self.sorter.format_folder_title(title)
+        assert result == "trip-2023"
+
+    def test_ampersand_removed(self):
+        """Test that ampersands are removed from folder names."""
+        date_str, title = self.sorter.parse_folder_name("Beach & Sun")
+        result = self.sorter.format_folder_title(title)
+        assert result == "beach-sun"
+
+    def test_already_formatted_unchanged(self):
+        """Test that already formatted folders remain unchanged."""
+        date_str, title = self.sorter.parse_folder_name("20230115_my-photos")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "20230115_my-photos"
+
+    def test_french_accents_preserved(self):
+        """Test that French accented characters are preserved."""
+        date_str, title = self.sorter.parse_folder_name("2023-05 Vacances à la plage")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "202305_vacances-à-la-plage"
+
+    def test_spanish_accents_preserved(self):
+        """Test that Spanish accented characters are preserved."""
+        date_str, title = self.sorter.parse_folder_name("2024 Año nuevo")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "2024_año-nuevo"
+
+    def test_german_umlauts_preserved(self):
+        """Test that German umlauts are preserved."""
+        date_str, title = self.sorter.parse_folder_name("2023-08 München trip")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "202308_münchen-trip"
+
+    def test_mixed_unicode_and_special_chars(self):
+        """Test Unicode characters preserved while special chars removed."""
+        date_str, title = self.sorter.parse_folder_name("Noël en famille!")
+        result = self.sorter.format_folder_title(title)
+        assert result == "noël-en-famille"
+
+    def test_portuguese_accents_preserved(self):
+        """Test that Portuguese accented characters are preserved."""
+        date_str, title = self.sorter.parse_folder_name("São Paulo 2024")
+        result = self.sorter.format_folder_title(title)
+        assert result == "são-paulo-2024"
+
+
+class TestShouldRename:
+    """Tests for should_rename logic."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_different_names_should_rename(self):
+        """Test that different names should be renamed."""
+        # Parse and format to get new name
+        date_str, title = self.sorter.parse_folder_name("2023-01-15 My Photos")
+        formatted_title = self.sorter.format_folder_title(title)
+        new_name = f"{date_str}_{formatted_title}" if formatted_title else date_str
+
+        # Original name is different from formatted
+        assert "2023-01-15 My Photos" != new_name
+        assert new_name == "20230115_my-photos"
+
+    def test_same_names_should_not_rename(self):
+        """Test that same names should not be renamed."""
+        # Parse and format already-formatted name
+        date_str, title = self.sorter.parse_folder_name("20230115_my-photos")
+        formatted_title = self.sorter.format_folder_title(title)
+        new_name = f"{date_str}_{formatted_title}" if formatted_title else date_str
+
+        # Should remain the same
+        assert "20230115_my-photos" == new_name
+
+    def test_folder_already_formatted_no_rename(self):
+        """Test that already formatted folder is not renamed."""
+        folder = Path(self.test_dir) / "20230515_vacation"
+        folder.mkdir()
+
+        result = self.sorter.rename_folder(folder)
+
+        # Should return same path (no rename)
+        assert result == folder
+        assert folder.exists()
+
+
+class TestExtractTitleFromFolderName:
+    """Tests for extracting title from folder name."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_formatted_folder_with_full_date(self):
+        """Test extracting title from formatted folder with full date."""
+        date_str, title = self.sorter.parse_folder_name("20230515_holiday-in-spain")
+        assert title == "holiday-in-spain"
+
+    def test_formatted_folder_with_year_month(self):
+        """Test extracting title from formatted folder with year-month."""
+        date_str, title = self.sorter.parse_folder_name("202305_vacation")
+        assert title == "vacation"
+
+    def test_formatted_folder_with_year_only(self):
+        """Test extracting title from formatted folder with year only."""
+        date_str, title = self.sorter.parse_folder_name("2023_summer-trip")
+        assert title == "summer-trip"
+
+    def test_unformatted_folder_with_date(self):
+        """Test extracting title from unformatted folder with date."""
+        date_str, title = self.sorter.parse_folder_name("2023-05-15 Holiday in Spain")
+        assert title == "Holiday in Spain"
+
+    def test_folder_without_date(self):
+        """Test extracting title from folder without date."""
+        date_str, title = self.sorter.parse_folder_name("my-photos")
+        assert title == "my-photos"
+
+    def test_folder_with_only_date(self):
+        """Test extracting title from folder with only date."""
+        date_str, title = self.sorter.parse_folder_name("20230515")
+        # When there's only a date, title should be empty
+        assert title == "" or title is None
+
+    def test_formatted_folder_with_year_range(self):
+        """Test extracting title from formatted folder with year range."""
+        date_str, title = self.sorter.parse_folder_name("2020-2022_childhood")
+        assert title == "childhood"
+
+    def test_unformatted_folder_with_year_range(self):
+        """Test extracting title from unformatted folder with year range."""
+        date_str, title = self.sorter.parse_folder_name("2020-2022 Childhood")
+        assert title == "Childhood"
+
+    def test_extract_title_from_path(self):
+        """Test that we can extract title when renaming folders."""
+        folder = Path(self.test_dir) / "2023-05-15 Holiday in Spain"
+        folder.mkdir()
+
+        # Get what the new name would be
+        date_str, title = self.sorter.parse_folder_name(folder.name)
+        assert date_str == "20230515"
+        assert title == "Holiday in Spain"
+
+        # Format it
+        formatted_title = self.sorter.format_folder_title(title)
+        assert formatted_title == "holiday-in-spain"
