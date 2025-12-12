@@ -229,17 +229,36 @@ class MediaSorter:
 
         Returns:
             Base filename without extension
+
+        Raises:
+            ValueError: If both datetime and title are empty
         """
         dt, fmt = dt_info if dt_info else (None, None)
         folder_dt, folder_title = self.parse_folder_name(parent_dir_name)
-        formatted_title = self.format_folder_title(folder_title)
+        formatted_title = self.format_folder_title(folder_title) if folder_title else ""
 
-        final_dt = dt or folder_dt
-        return (
-            f"{final_dt.strftime(fmt)}_{formatted_title}"
-            if final_dt
-            else formatted_title
-        )
+        # If we have a datetime object from dt_info, use it
+        if dt:
+            if formatted_title:
+                return f"{dt.strftime(fmt)}_{formatted_title}"
+            else:
+                return dt.strftime(fmt)
+
+        # If we have a folder datetime string, try to extract datetime from it
+        if folder_dt:
+            folder_dt_info = self.extract_datetimeinfo_from_folder_name(parent_dir_name)
+            if folder_dt_info:
+                if formatted_title:
+                    return f"{folder_dt_info.datetime.strftime(folder_dt_info.format_str)}_{formatted_title}"
+                else:
+                    return folder_dt_info.datetime.strftime(folder_dt_info.format_str)
+
+        # Only title, no datetime
+        if formatted_title:
+            return formatted_title
+
+        # Neither datetime nor title - this should not happen in normal operation
+        raise ValueError("Cannot create filename: both datetime and title are empty")
 
     def generate_unique_filename(
         self, directory: Path, base_name: str, extension: str

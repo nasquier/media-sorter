@@ -536,10 +536,9 @@ class TestCreateBaseFilename:
     def test_create_with_datetime_no_folder_title(self):
         """Test creating base filename with datetime but no folder title."""
         dt_info = DateTimeAndFormat(datetime(2023, 5, 15), "%Y%m%d")
-        #
-        # parse_folder_name returns ("", "") for folder with only date, no title
+        # When datetime is provided but no title, should return just the datetime
         result = self.sorter.create_base_filename(dt_info, "")
-        assert result == "20230515_"
+        assert result == "20230515"
 
     def test_create_no_datetime_with_title(self):
         """Test creating base filename without datetime but with title."""
@@ -549,18 +548,13 @@ class TestCreateBaseFilename:
 
     def test_create_no_datetime_no_title(self):
         """Test creating base filename without datetime or title."""
-        result = self.sorter.create_base_filename(None, "")
-        assert result == ""
+        # Should raise error when both datetime and title are empty
+        with pytest.raises(ValueError, match="Cannot create filename"):
+            self.sorter.create_base_filename(None, "")
 
     def test_create_uses_folder_datetime_when_no_file_datetime(self):
         """Test that folder datetime is used when file has no datetime."""
-        # When no dt_info is provided but folder has date,
-        # folder_dt is a string and can't call strftime
-        # This is actually a bug in the code - it should extract datetime from folder_name
-        # For now, test with a folder that has no date
         result = self.sorter.create_base_filename(None, "Vacation Photos")
-        # parse_folder_name extracts "" and "Vacation Photos"
-        # format_folder_title converts "Vacation Photos" to "vacation-photos"
         assert result == "vacation-photos"
 
 
