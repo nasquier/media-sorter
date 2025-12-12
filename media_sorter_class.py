@@ -69,10 +69,6 @@ class MediaSorter:
         for file in files:
             self.rename_file(new_folder_path / file)
 
-    def format_folder_title(self, title: str) -> str:
-        """Format folder title by replacing spaces with hyphens and converting to lowercase."""
-        return title.replace(" ", "-").lower()
-
     def rename_folder(self, folder_path: Path) -> Path:
         """Rename folder based on date and title extracted from its name."""
         # Parse folder name
@@ -196,6 +192,10 @@ class MediaSorter:
         # If no title provided after date, return "" for title
         return date_str, title or ""
 
+    def format_folder_title(self, title: str) -> str:
+        """Format folder title by replacing spaces with hyphens and converting to lowercase."""
+        return title.replace(" ", "-").lower()
+
     def extract_datetimeinfo_from_exif(
         self, file_path: Path
     ) -> Optional[DateTimeAndFormat]:
@@ -240,6 +240,60 @@ class MediaSorter:
         except Exception:
             pass
         return None
+
+    def create_base_filename(
+        self, dt_info: DateTimeAndFormat, parent_dir_name: str
+    ) -> str:
+        """
+        Create base filename from datetime and parent directory name.
+
+        Args:
+            dt_info: Tuple of (datetime, format_string) or None
+            parent_dir_name: Name of the parent directory
+
+        Returns:
+            Base filename without extension
+        """
+        dt, fmt = dt_info if dt_info else (None, None)
+        folder_dt, folder_title = self.parse_folder_name(parent_dir_name)
+        formatted_title = self.format_folder_title(folder_title)
+
+        final_dt = dt or folder_dt
+        return (
+            f"{final_dt.strftime(fmt)}_{formatted_title}"
+            if final_dt
+            else formatted_title
+        )
+
+    def generate_unique_filename(
+        self, directory: Path, base_name: str, extension: str
+    ) -> str:
+        """
+        Generate a unique filename in the directory by adding a counter if needed.
+
+        Args:
+            directory: Path object for the directory
+            base_name: Base name for the file (without extension)
+            extension: File extension (including the dot)
+
+        Returns:
+            str: Unique filename
+
+        Raises:
+            ValueError: If too many files with the same base name exist
+        """
+        # Try the base name first
+        candidate = f"{base_name}{extension}"
+        if not (directory / candidate).exists():
+            return candidate
+
+        # File exists, start adding counters
+        for counter in range(1, 1000):
+            candidate = f"{base_name}_{counter:03d}{extension}"
+            if not (directory / candidate).exists():
+                return candidate
+
+        raise ValueError(f"Too many files with base name {base_name}")
 
     def extract_datetimeinfo_from_filename(
         self, filename: str
@@ -347,60 +401,6 @@ class MediaSorter:
             pass
 
         return None
-
-    def create_base_filename(
-        self, dt_info: DateTimeAndFormat, parent_dir_name: str
-    ) -> str:
-        """
-        Create base filename from datetime and parent directory name.
-
-        Args:
-            dt_info: Tuple of (datetime, format_string) or None
-            parent_dir_name: Name of the parent directory
-
-        Returns:
-            Base filename without extension
-        """
-        dt, fmt = dt_info if dt_info else (None, None)
-        folder_dt, folder_title = self.parse_folder_name(parent_dir_name)
-        formatted_title = self.format_folder_title(folder_title)
-
-        final_dt = dt or folder_dt
-        return (
-            f"{final_dt.strftime(fmt)}_{formatted_title}"
-            if final_dt
-            else formatted_title
-        )
-
-    def generate_unique_filename(
-        self, directory: Path, base_name: str, extension: str
-    ) -> str:
-        """
-        Generate a unique filename in the directory by adding a counter if needed.
-
-        Args:
-            directory: Path object for the directory
-            base_name: Base name for the file (without extension)
-            extension: File extension (including the dot)
-
-        Returns:
-            str: Unique filename
-
-        Raises:
-            ValueError: If too many files with the same base name exist
-        """
-        # Try the base name first
-        candidate = f"{base_name}{extension}"
-        if not (directory / candidate).exists():
-            return candidate
-
-        # File exists, start adding counters
-        for counter in range(1, 1000):
-            candidate = f"{base_name}_{counter:03d}{extension}"
-            if not (directory / candidate).exists():
-                return candidate
-
-        raise ValueError(f"Too many files with base name {base_name}")
 
     def show_progress(self):
         """Display progress of processing."""
