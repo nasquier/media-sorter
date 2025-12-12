@@ -7,7 +7,6 @@ from typing import Optional, Tuple
 from PIL import Image, ExifTags
 from collections import namedtuple
 
-
 # Supported media file extensions
 MEDIA_EXTENSIONS = {
     ".jpg",
@@ -25,7 +24,6 @@ MEDIA_EXTENSIONS = {
 
 # EXIF datetime tags in order of preference
 DATETIME_EXIF_TAGS = ["DateTimeOriginal", "DateTimeDigitized", "DateTime"]
-
 
 # All supported datetime formats, from most specific to least specific
 # Map format strings to output formats
@@ -219,41 +217,6 @@ class MediaSorter:
         """Format folder title by replacing spaces with hyphens and converting to lowercase."""
         return title.replace(" ", "-").lower()
 
-    def extract_datetimeinfo_from_exif(
-        self, file_path: Path
-    ) -> Optional[DateTimeAndFormat]:
-        """
-        Extract datetime from media file EXIF metadata.
-
-        Args:
-            file_path: Path to the media file
-
-        Returns:
-            Optional[MediaDateInfo]: datetime object if EXIF date found, None otherwise
-        """
-
-        try:
-            with Image.open(file_path) as image:
-                exif_data = image.getexif()
-                if not exif_data:
-                    return None
-                for preferred_tag in DATETIME_EXIF_TAGS:
-                    for tag_id, value in exif_data.items():
-                        tag = ExifTags.TAGS.get(tag_id)
-                        if tag == preferred_tag:
-                            for (
-                                format_str,
-                                output_format,
-                            ) in EXIF_DT_FORMAT_MAP.items():
-                                try:
-                                    dt = datetime.strptime(value, format_str)
-                                    return DateTimeAndFormat(dt, output_format)
-                                except (ValueError, TypeError):
-                                    continue
-        except Exception:
-            pass
-        return None
-
     def create_base_filename(
         self, dt_info: DateTimeAndFormat, parent_dir_name: str
     ) -> str:
@@ -307,6 +270,41 @@ class MediaSorter:
                 return candidate
 
         raise ValueError(f"Too many files with base name {base_name}")
+
+    def extract_datetimeinfo_from_exif(
+        self, file_path: Path
+    ) -> Optional[DateTimeAndFormat]:
+        """
+        Extract datetime from media file EXIF metadata.
+
+        Args:
+            file_path: Path to the media file
+
+        Returns:
+            Optional[MediaDateInfo]: datetime object if EXIF date found, None otherwise
+        """
+
+        try:
+            with Image.open(file_path) as image:
+                exif_data = image.getexif()
+                if not exif_data:
+                    return None
+                for preferred_tag in DATETIME_EXIF_TAGS:
+                    for tag_id, value in exif_data.items():
+                        tag = ExifTags.TAGS.get(tag_id)
+                        if tag == preferred_tag:
+                            for (
+                                format_str,
+                                output_format,
+                            ) in EXIF_DT_FORMAT_MAP.items():
+                                try:
+                                    dt = datetime.strptime(value, format_str)
+                                    return DateTimeAndFormat(dt, output_format)
+                                except (ValueError, TypeError):
+                                    continue
+        except Exception:
+            pass
+        return None
 
     def extract_datetimeinfo_from_filename(
         self, filename: str
