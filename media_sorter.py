@@ -225,13 +225,13 @@ class MediaSorter:
         Returns:
             Sanitized text with special characters removed
         """
-        # Replace spaces and underscores with hyphens
+        # Replace spaces with hyphens
         sanitized = re.sub(r"[\s]", "-", title)
-        # We erase all non-word characters except hyphens and underscores
+        # Erase all non-word characters except hyphens and underscores
         sanitized = re.sub(r"[^\w\_\-]", "", sanitized, flags=re.UNICODE)
         # Clean up multi hyphens
         sanitized = re.sub(r"-+", "-", sanitized)
-        return sanitized.lower()
+        return sanitized.strip("-").lower()
 
     # Clean up multiple spaces and trim
     def create_base_filename(
@@ -485,7 +485,7 @@ class MediaSorter:
 
     def write_exif(self, file_path: Path, dt_info: DateTimeAndFormat):
         """
-        Write EXIF DateTimeOriginal tag to the image file.
+        Write EXIF to the image file.
 
         Args:
             file_path: Path to the image file
@@ -505,10 +505,6 @@ class MediaSorter:
                             break
 
                     if date_time_tag is not None:
-                        # Do not overwrite existing EXIF date
-                        if bool(exif_data[date_time_tag]):
-                            continue
-
                         exif_format = next(
                             (
                                 exif_format
