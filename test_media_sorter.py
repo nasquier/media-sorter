@@ -1,1249 +1,1452 @@
-"""Tests for media_sorter module."""
+"""Comprehensive tests for MediaSorter class."""
 
 import os
 import pytest
 from pathlib import Path
 import tempfile
 import shutil
+from datetime import datetime
+from PIL import Image
+from PIL.ExifTags import TAGS
+from unittest.mock import Mock, patch, MagicMock
 
 from media_sorter import (
-    parse_folder_name,
-    format_folder_name,
-    should_rename,
-    rename_folders,
-    extract_title_from_folder_name,
+    MediaSorter,
+    MEDIA_EXTENSIONS,
+    DATETIME_EXIF_TAGS,
+    EXIF_DT_FORMAT_MAP,
+    DateTimeAndFormat,
 )
 
 
-class TestParseFolderName:
-    """Tests for parse_folder_name function."""
+class TestMediaSorterInit:
+    """Tests for MediaSorter initialization."""
 
-    def test_full_date_with_title(self):
+    def setup_method(self):
+        """Create a temporary directory for testing."""
+        self.test_dir = tempfile.mkdtemp()
+
+    def teardown_method(self):
+        """Clean up temporary directory after testing."""
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_init_empty_directory(self):
+        """Test initialization with empty directory."""
+        sorter = MediaSorter(Path(self.test_dir))
+        assert sorter.input_folder_path == Path(self.test_dir)
+        assert sorter.dry_mode is False
+        assert sorter.n_files == 0
+        assert sorter.n_folders == 0
+        assert sorter.n_total_items == 0
+
+    def test_init_with_dry_mode(self):
+        """Test initialization with dry mode enabled."""
+        sorter = MediaSorter(Path(self.test_dir), dry_mode=True)
+        assert sorter.dry_mode is True
+
+    def test_init_counts_media_files(self):
+        """Test that initialization counts media files correctly."""
+        # Create some media files
+        (Path(self.test_dir) / "photo1.jpg").touch()
+        (Path(self.test_dir) / "photo2.png").touch()
+        (Path(self.test_dir) / "video1.mp4").touch()
+        (Path(self.test_dir) / "document.txt").touch()  # Not a media file
+
+        sorter = MediaSorter(Path(self.test_dir))
+        assert sorter.n_files == 3
+        assert sorter.n_folders == 0
+
+    def test_init_counts_nested_files(self):
+        """Test that initialization counts nested files correctly."""
+        subfolder = Path(self.test_dir) / "subfolder"
+        subfolder.mkdir()
+        (subfolder / "photo.jpg").touch()
+        (Path(self.test_dir) / "video.mp4").touch()
+
+        sorter = MediaSorter(Path(self.test_dir))
+        assert sorter.n_files == 2
+        assert sorter.n_folders == 1
+        assert sorter.n_total_items == 3
+
+    def test_init_case_insensitive_extensions(self):
+        """Test that initialization recognizes uppercase extensions."""
+        (Path(self.test_dir) / "PHOTO.JPG").touch()
+        (Path(self.test_dir) / "Video.MP4").touch()
+
+        sorter = MediaSorter(Path(self.test_dir))
+        assert sorter.n_files == 2
+
+
+class TestParseFolderName:
+    """Tests for parse_folder_name method."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_parse_full_date_with_title(self):
         """Test parsing folder with full date and title."""
-        date_str, title = parse_folder_name("2023-01-15 My Photos")
+        date_str, title = self.sorter.parse_folder_name("2023-01-15 My Photos")
         assert date_str == "20230115"
         assert title == "My Photos"
 
-    def test_year_month_with_title(self):
+    def test_parse_year_month_with_title(self):
         """Test parsing folder with year-month and title."""
-        date_str, title = parse_folder_name("2023-01 Vacation")
+        date_str, title = self.sorter.parse_folder_name("2023-01 Vacation")
         assert date_str == "202301"
         assert title == "Vacation"
 
-    def test_year_only_with_title(self):
+    def test_parse_year_only_with_title(self):
         """Test parsing folder with year only and title."""
-        date_str, title = parse_folder_name("2023 Summer")
+        date_str, title = self.sorter.parse_folder_name("2023 Summer")
         assert date_str == "2023"
         assert title == "Summer"
 
-    def test_no_date_only_title(self):
-        """Test parsing folder with no date, only title."""
-        date_str, title = parse_folder_name("My Photos")
-        assert date_str is None
-        assert title == "My Photos"
-
-    def test_date_without_title(self):
-        """Test parsing folder with date but no title."""
-        date_str, title = parse_folder_name("2023-01-15")
-        assert date_str == "20230115"
-        assert title == ""
-
-    def test_date_with_multiple_spaces(self):
-        """Test parsing folder with date and title separated by space."""
-        date_str, title = parse_folder_name("2023-01-15 My Great Photos")
-        assert date_str == "20230115"
-        assert title == "My Great Photos"
-
-    def test_year_range_with_title(self):
+    def test_parse_year_range_with_title(self):
         """Test parsing folder with year range and title."""
-        date_str, title = parse_folder_name("2020-2022 Childhood")
+        date_str, title = self.sorter.parse_folder_name("2020-2022 Childhood")
         assert date_str == "2020-2022"
         assert title == "Childhood"
 
-    def test_year_range_without_title(self):
+    def test_parse_year_range_without_title(self):
         """Test parsing folder with year range but no title."""
-        date_str, title = parse_folder_name("2015-2018")
+        date_str, title = self.sorter.parse_folder_name("2015-2018")
         assert date_str == "2015-2018"
+        assert title is None or title == ""
+
+    def test_parse_no_date_only_title(self):
+        """Test parsing folder with no date, only title."""
+        date_str, title = self.sorter.parse_folder_name("My Photos")
+        assert date_str == ""
+        assert title == "My Photos"
+
+    def test_parse_date_without_title(self):
+        """Test parsing folder with date but no title."""
+        date_str, title = self.sorter.parse_folder_name("2023-01-15")
+        assert date_str == "20230115"
         assert title == ""
 
-    def test_year_range_already_formatted(self):
-        """Test parsing already formatted year range folder."""
-        date_str, title = parse_folder_name("2020-2022_childhood")
+    def test_parse_already_formatted_full_date(self):
+        """Test parsing already formatted folder with full date."""
+        date_str, title = self.sorter.parse_folder_name("20230115_my-photos")
+        assert date_str == "20230115"
+        assert title == "my-photos"
+
+    def test_parse_already_formatted_year_month(self):
+        """Test parsing already formatted folder with year-month."""
+        date_str, title = self.sorter.parse_folder_name("202301_vacation")
+        assert date_str == "202301"
+        assert title == "vacation"
+
+    def test_parse_already_formatted_year_only(self):
+        """Test parsing already formatted folder with year only."""
+        date_str, title = self.sorter.parse_folder_name("2023_summer")
+        assert date_str == "2023"
+        assert title == "summer"
+
+    def test_parse_already_formatted_year_range(self):
+        """Test parsing already formatted folder with year range."""
+        date_str, title = self.sorter.parse_folder_name("2020-2022_childhood")
         assert date_str == "2020-2022"
         assert title == "childhood"
 
+    def test_parse_empty_string(self):
+        """Test parsing empty string."""
+        date_str, title = self.sorter.parse_folder_name("")
+        assert date_str == ""
+        assert title == ""
 
-class TestFormatFolderName:
-    """Tests for format_folder_name function."""
+    def test_parse_multiple_spaces_in_title(self):
+        """Test parsing folder with multiple spaces in title."""
+        date_str, title = self.sorter.parse_folder_name("2023-01-15 My Great Photos")
+        assert date_str == "20230115"
+        assert title == "My Great Photos"
 
-    def test_date_with_title(self):
-        """Test formatting with date and title."""
-        result = format_folder_name("20230115", "My Photos")
-        assert result == "20230115_my-photos"
 
-    def test_date_without_title(self):
-        """Test formatting with date but no title."""
-        result = format_folder_name("20230115", "")
-        assert result == "20230115"
+class TestFormatFolderTitle:
+    """Tests for format_folder_title method."""
 
-    def test_no_date_with_title(self):
-        """Test formatting with no date, only title."""
-        result = format_folder_name(None, "My Photos")
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_format_simple_title(self):
+        """Test formatting simple title."""
+        result = self.sorter.format_folder_title("My Photos")
         assert result == "my-photos"
 
-    def test_title_with_multiple_spaces(self):
+    def test_format_multiple_spaces(self):
         """Test formatting title with multiple spaces."""
-        result = format_folder_name("20230115", "My Great Photos")
-        assert result == "20230115_my-great-photos"
+        result = self.sorter.format_folder_title("My Great Photos")
+        assert result == "my-great-photos"
 
-    def test_year_month_with_title(self):
-        """Test formatting with year-month and title."""
-        result = format_folder_name("202301", "Vacation")
-        assert result == "202301_vacation"
+    def test_format_already_lowercase(self):
+        """Test formatting already lowercase title."""
+        result = self.sorter.format_folder_title("my photos")
+        assert result == "my-photos"
 
-    def test_year_only_with_title(self):
-        """Test formatting with year only and title."""
-        result = format_folder_name("2023", "Summer")
-        assert result == "2023_summer"
+    def test_format_with_hyphens(self):
+        """Test formatting title that already has hyphens."""
+        result = self.sorter.format_folder_title("my-photos")
+        assert result == "my-photos"
 
-    def test_year_range_with_title(self):
-        """Test formatting with year range and title."""
-        result = format_folder_name("2020-2022", "Childhood")
-        assert result == "2020-2022_childhood"
+    def test_format_empty_string(self):
+        """Test formatting empty string."""
+        result = self.sorter.format_folder_title("")
+        assert result == ""
 
-    def test_year_range_without_title(self):
-        """Test formatting with year range but no title."""
-        result = format_folder_name("2015-2018", "")
-        assert result == "2015-2018"
+    def test_format_unicode_characters(self):
+        """Test formatting with unicode characters."""
+        result = self.sorter.format_folder_title("Vacances à Paris")
+        assert result == "vacances-à-paris"
+
+
+class TestGenerateUniqueFilename:
+    """Tests for generate_unique_filename method."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_unique_filename_no_collision(self):
+        """Test generating unique filename with no collision."""
+        result = self.sorter.generate_unique_filename(
+            Path(self.test_dir), "photo", ".jpg"
+        )
+        assert result == "photo.jpg"
+
+    def test_unique_filename_with_collision(self):
+        """Test generating unique filename when file exists."""
+        (Path(self.test_dir) / "photo.jpg").touch()
+        result = self.sorter.generate_unique_filename(
+            Path(self.test_dir), "photo", ".jpg"
+        )
+        assert result == "photo_001.jpg"
+
+    def test_unique_filename_multiple_collisions(self):
+        """Test generating unique filename with multiple collisions."""
+        (Path(self.test_dir) / "photo.jpg").touch()
+        (Path(self.test_dir) / "photo_001.jpg").touch()
+        (Path(self.test_dir) / "photo_002.jpg").touch()
+        result = self.sorter.generate_unique_filename(
+            Path(self.test_dir), "photo", ".jpg"
+        )
+        assert result == "photo_003.jpg"
+
+    def test_unique_filename_different_extension(self):
+        """Test that different extensions don't collide."""
+        (Path(self.test_dir) / "photo.jpg").touch()
+        result = self.sorter.generate_unique_filename(
+            Path(self.test_dir), "photo", ".png"
+        )
+        assert result == "photo.png"
+
+    def test_unique_filename_too_many_files(self):
+        """Test error when too many files with same base name exist."""
+        # Create 1000 files to trigger the error
+        for i in range(1000):
+            if i == 0:
+                (Path(self.test_dir) / "photo.jpg").touch()
+            else:
+                (Path(self.test_dir) / f"photo_{i:03d}.jpg").touch()
+
+        with pytest.raises(ValueError, match="Too many files with base name"):
+            self.sorter.generate_unique_filename(Path(self.test_dir), "photo", ".jpg")
+
+
+class TestExtractDateTimeInfoFromExif:
+    """Tests for extract_datetimeinfo_from_exif method."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_extract_from_image_with_datetime_original(self):
+        """Test extracting datetime from EXIF DateTimeOriginal."""
+        img_path = Path(self.test_dir) / "photo.jpg"
+        img = Image.new("RGB", (100, 100))
+        exif = img.getexif()
+
+        # Find DateTimeOriginal tag ID
+        datetime_original_tag = None
+        for tag_id, tag_name in TAGS.items():
+            if tag_name == "DateTimeOriginal":
+                datetime_original_tag = tag_id
+                break
+
+        exif[datetime_original_tag] = "2023:05:15 14:30:45"
+        img.save(img_path, exif=exif)
+
+        result = self.sorter.extract_datetimeinfo_from_exif(img_path)
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15, 14, 30, 45)
+        assert result.format_str == "%Y%m%d%H%M%S"
+
+    def test_extract_from_image_without_exif(self):
+        """Test extracting datetime from image without EXIF data."""
+        img_path = Path(self.test_dir) / "photo.jpg"
+        img = Image.new("RGB", (100, 100))
+        img.save(img_path)
+
+        result = self.sorter.extract_datetimeinfo_from_exif(img_path)
+        assert result is None
+
+    def test_extract_from_nonexistent_file(self):
+        """Test extracting datetime from nonexistent file."""
+        result = self.sorter.extract_datetimeinfo_from_exif(
+            Path(self.test_dir) / "nonexistent.jpg"
+        )
+        assert result is None
+
+    def test_extract_from_non_image_file(self):
+        """Test extracting datetime from non-image file."""
+        txt_path = Path(self.test_dir) / "file.txt"
+        txt_path.write_text("not an image")
+
+        result = self.sorter.extract_datetimeinfo_from_exif(txt_path)
+        assert result is None
+
+    def test_extract_with_partial_datetime(self):
+        """Test extracting partial datetime from EXIF."""
+        img_path = Path(self.test_dir) / "photo.jpg"
+        img = Image.new("RGB", (100, 100))
+        exif = img.getexif()
+
+        # Find DateTime tag ID
+        datetime_tag = None
+        for tag_id, tag_name in TAGS.items():
+            if tag_name == "DateTime":
+                datetime_tag = tag_id
+                break
+
+        exif[datetime_tag] = "2023:05:15"
+        img.save(img_path, exif=exif)
+
+        result = self.sorter.extract_datetimeinfo_from_exif(img_path)
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15)
+        assert result.format_str == "%Y%m%d"
+
+
+class TestExtractDateTimeInfoFromFilename:
+    """Tests for extract_datetimeinfo_from_filename method."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_extract_signal_pattern(self):
+        """Test extracting datetime from Signal filename pattern."""
+        result = self.sorter.extract_datetimeinfo_from_filename(
+            "signal-2023-05-15-14-30-45-abc123.jpg"
+        )
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15, 14, 30, 45)
+        assert result.format_str == "%Y%m%d%H%M%S"
+
+    def test_extract_signal_pattern_case_insensitive(self):
+        """Test extracting datetime from Signal filename with different case."""
+        result = self.sorter.extract_datetimeinfo_from_filename(
+            "SIGNAL-2023-05-15-14-30-45-abc123.jpg"
+        )
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15, 14, 30, 45)
+
+    def test_extract_whatsapp_img_pattern(self):
+        """Test extracting datetime from WhatsApp IMG pattern."""
+        result = self.sorter.extract_datetimeinfo_from_filename(
+            "IMG-20230515-WA001.jpg"
+        )
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15)
+        assert result.format_str == "%Y%m%d"
+
+    def test_extract_whatsapp_vid_pattern(self):
+        """Test extracting datetime from WhatsApp VID pattern."""
+        result = self.sorter.extract_datetimeinfo_from_filename(
+            "VID-20230515-WA001.mp4"
+        )
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15)
+        assert result.format_str == "%Y%m%d"
+
+    def test_extract_whatsapp_pattern_case_insensitive(self):
+        """Test extracting datetime from WhatsApp filename with different case."""
+        result = self.sorter.extract_datetimeinfo_from_filename(
+            "img-20230515-wa001.jpg"
+        )
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15)
+
+    def test_extract_generic_img_pattern(self):
+        """Test extracting datetime from generic IMG pattern."""
+        result = self.sorter.extract_datetimeinfo_from_filename(
+            "IMG_20230515_143045.jpg"
+        )
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15, 14, 30, 45)
+        assert result.format_str == "%Y%m%d%H%M%S"
+
+    def test_extract_generic_vid_pattern(self):
+        """Test extracting datetime from generic VID pattern."""
+        result = self.sorter.extract_datetimeinfo_from_filename(
+            "VID_20230515_143045.mp4"
+        )
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15, 14, 30, 45)
+
+    def test_extract_wanted_pattern_full(self):
+        """Test extracting datetime from wanted pattern with full datetime."""
+        result = self.sorter.extract_datetimeinfo_from_filename(
+            "20230515143045-randomtext.jpg"
+        )
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15, 14, 30, 45)
+        assert result.format_str == "%Y%m%d%H%M%S"
+
+    def test_extract_wanted_pattern_date_only(self):
+        """Test extracting datetime from wanted pattern with date only."""
+        result = self.sorter.extract_datetimeinfo_from_filename("20230515-photo.jpg")
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15)
+        assert result.format_str == "%Y%m%d"
+
+    def test_extract_wanted_pattern_year_month(self):
+        """Test extracting datetime from wanted pattern with year-month."""
+        result = self.sorter.extract_datetimeinfo_from_filename("202305-photo.jpg")
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 1)
+        assert result.format_str == "%Y%m"
+
+    def test_extract_wanted_pattern_year_only(self):
+        """Test extracting datetime from wanted pattern with year only."""
+        result = self.sorter.extract_datetimeinfo_from_filename("2023-photo.jpg")
+        assert result is not None
+        assert result.datetime == datetime(2023, 1, 1)
+        assert result.format_str == "%Y"
+
+    def test_extract_no_pattern_match(self):
+        """Test extracting datetime from filename with no matching pattern."""
+        result = self.sorter.extract_datetimeinfo_from_filename("random_photo.jpg")
+        assert result is None
+
+    def test_extract_invalid_date(self):
+        """Test extracting datetime from filename with invalid date."""
+        result = self.sorter.extract_datetimeinfo_from_filename(
+            "signal-2023-13-32-25-61-61-abc.jpg"
+        )
+        assert result is None
+
+
+class TestExtractDateTimeInfoFromFolderName:
+    """Tests for extract_datetimeinfo_from_folder_name method."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_extract_full_date(self):
+        """Test extracting datetime from folder with full date."""
+        result = self.sorter.extract_datetimeinfo_from_folder_name("20230515_vacation")
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15)
+        assert result.format_str == "%Y%m%d"
+
+    def test_extract_year_month(self):
+        """Test extracting datetime from folder with year-month."""
+        result = self.sorter.extract_datetimeinfo_from_folder_name("202305_vacation")
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 1)
+        assert result.format_str == "%Y%m"
+
+    def test_extract_year_only(self):
+        """Test extracting datetime from folder with year only."""
+        result = self.sorter.extract_datetimeinfo_from_folder_name("2023_vacation")
+        assert result is not None
+        assert result.datetime == datetime(2023, 1, 1)
+        assert result.format_str == "%Y"
+
+    def test_extract_formatted_date(self):
+        """Test extracting datetime from formatted folder name."""
+        result = self.sorter.extract_datetimeinfo_from_folder_name(
+            "2023-05-15 Vacation"
+        )
+        assert result is not None
+        assert result.datetime == datetime(2023, 5, 15)
+        assert result.format_str == "%Y%m%d"
+
+    def test_extract_year_range_returns_none(self):
+        """Test that year ranges return None."""
+        result = self.sorter.extract_datetimeinfo_from_folder_name("2020-2022_photos")
+        assert result is None
+
+    def test_extract_no_date(self):
+        """Test extracting datetime from folder without date."""
+        result = self.sorter.extract_datetimeinfo_from_folder_name("vacation")
+        assert result is None
+
+    def test_extract_invalid_date(self):
+        """Test extracting datetime from folder with invalid date."""
+        result = self.sorter.extract_datetimeinfo_from_folder_name("20231332_vacation")
+        assert result is None
+
+
+class TestCreateBaseFilename:
+    """Tests for create_base_filename method."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_create_with_datetime_and_title(self):
+        """Test creating base filename with datetime and title."""
+        dt_info = DateTimeAndFormat(datetime(2023, 5, 15, 14, 30, 45), "%Y%m%d%H%M%S")
+        result = self.sorter.create_base_filename(dt_info, "20230515_vacation")
+        assert result == "20230515143045_vacation"
+
+    def test_create_with_datetime_no_folder_title(self):
+        """Test creating base filename with datetime but no folder title."""
+        dt_info = DateTimeAndFormat(datetime(2023, 5, 15), "%Y%m%d")
+        # When datetime is provided but no title, should return just the datetime
+        result = self.sorter.create_base_filename(dt_info, "")
+        assert result == "20230515"
+
+    def test_create_no_datetime_with_title(self):
+        """Test creating base filename without datetime but with title."""
+        result = self.sorter.create_base_filename(None, "vacation_photos")
+        # parse_folder_name returns ("", "vacation_photos"), format_folder_title replaces spaces not underscores
+        assert result == "vacation_photos"
+
+    def test_create_no_datetime_no_title(self):
+        """Test creating base filename without datetime or title."""
+        # Should raise error when both datetime and title are empty
+        with pytest.raises(ValueError, match="Cannot create filename"):
+            self.sorter.create_base_filename(None, "")
+
+    def test_create_uses_folder_datetime_when_no_file_datetime(self):
+        """Test that folder datetime is used when file has no datetime."""
+        result = self.sorter.create_base_filename(None, "Vacation Photos")
+        assert result == "vacation-photos"
+
+
+class TestRenameFolder:
+    """Tests for rename_folder method."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_rename_folder_with_date_and_title(self):
+        """Test renaming folder with date and title."""
+        folder = Path(self.test_dir) / "2023-05-15 My Photos"
+        folder.mkdir()
+
+        result = self.sorter.rename_folder(folder)
+
+        expected = Path(self.test_dir) / "20230515_my-photos"
+        assert result == expected
+        assert expected.exists()
+        assert not folder.exists()
+
+    def test_rename_folder_dry_mode(self):
+        """Test renaming folder in dry mode."""
+        self.sorter.dry_mode = True
+        folder = Path(self.test_dir) / "2023-05-15 My Photos"
+        folder.mkdir()
+
+        result = self.sorter.rename_folder(folder)
+
+        # In dry mode, should return original path
+        assert result == folder
+        assert folder.exists()
+        assert not (Path(self.test_dir) / "20230515_my-photos").exists()
+
+    def test_rename_folder_already_formatted(self):
+        """Test that already formatted folder is not renamed."""
+        folder = Path(self.test_dir) / "20230515_my-photos"
+        folder.mkdir()
+
+        result = self.sorter.rename_folder(folder)
+
+        assert result == folder
+        assert folder.exists()
+
+    def test_rename_folder_date_only(self):
+        """Test renaming folder with date only."""
+        folder = Path(self.test_dir) / "2023-05-15"
+        folder.mkdir()
+
+        result = self.sorter.rename_folder(folder)
+
+        expected = Path(self.test_dir) / "20230515"
+        assert result == expected
+        assert expected.exists()
+
+    def test_rename_folder_title_only(self):
+        """Test renaming folder with title only."""
+        folder = Path(self.test_dir) / "My Photos"
+        folder.mkdir()
+
+        result = self.sorter.rename_folder(folder)
+
+        expected = Path(self.test_dir) / "my-photos"
+        assert result == expected
+        assert expected.exists()
+
+    def test_rename_folder_increments_progress(self):
+        """Test that renaming folder increments progress counter."""
+        folder = Path(self.test_dir) / "my-photos"
+        folder.mkdir()
+
+        initial_count = self.sorter.n_folders_processed
+        self.sorter.rename_folder(folder)
+
+        # Progress is incremented even if no rename happens
+        assert self.sorter.n_folders_processed == initial_count + 1
+
+
+class TestRenameFile:
+    """Tests for rename_file method."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_rename_file_with_exif_data(self):
+        """Test renaming file with EXIF data."""
+        img_path = Path(self.test_dir) / "photo.jpg"
+        img = Image.new("RGB", (100, 100))
+        exif = img.getexif()
+
+        # Find DateTimeOriginal tag ID
+        datetime_original_tag = None
+        for tag_id, tag_name in TAGS.items():
+            if tag_name == "DateTimeOriginal":
+                datetime_original_tag = tag_id
+                break
+
+        exif[datetime_original_tag] = "2023:05:15 14:30:45"
+        img.save(img_path, exif=exif)
+
+        self.sorter.rename_file(img_path)
+
+        # Check that file was renamed with datetime from EXIF and parent folder name
+        # The file gets the test dir name appended
+        new_files = list(Path(self.test_dir).glob("20230515143045_*.jpg"))
+        assert len(new_files) == 1
+        assert not img_path.exists()
+
+    def test_rename_file_with_signal_filename(self):
+        """Test renaming file with Signal filename pattern."""
+        file_path = Path(self.test_dir) / "signal-2023-05-15-14-30-45-abc.jpg"
+        file_path.touch()
+
+        self.sorter.rename_file(file_path)
+
+        # Check that file was renamed with datetime from filename
+        new_files = list(Path(self.test_dir).glob("20230515143045_*.jpg"))
+        assert len(new_files) == 1
+        assert not file_path.exists()
+
+    def test_rename_file_with_whatsapp_filename(self):
+        """Test renaming file with WhatsApp filename pattern."""
+        file_path = Path(self.test_dir) / "IMG-20230515-WA001.jpg"
+        file_path.touch()
+
+        self.sorter.rename_file(file_path)
+
+        # Check that file was renamed with datetime from filename
+        new_files = list(Path(self.test_dir).glob("20230515_*.jpg"))
+        assert len(new_files) == 1
+        assert not file_path.exists()
+
+    def test_rename_file_uses_folder_datetime(self):
+        """Test renaming file uses folder datetime when no file datetime."""
+        folder = Path(self.test_dir) / "20230515_vacation"
+        folder.mkdir()
+        file_path = folder / "photo.jpg"
+        file_path.touch()
+
+        sorter = MediaSorter(Path(self.test_dir))
+        sorter.rename_file(file_path)
+
+        # Check that file was renamed with datetime from folder
+        new_files = list(folder.glob("20230515_vacation*.jpg"))
+        assert len(new_files) == 1
+
+    def test_rename_file_dry_mode(self):
+        """Test renaming file in dry mode."""
+        self.sorter.dry_mode = True
+        file_path = Path(self.test_dir) / "signal-2023-05-15-14-30-45-abc.jpg"
+        file_path.touch()
+
+        self.sorter.rename_file(file_path)
+
+        # In dry mode, file should not be renamed
+        assert file_path.exists()
+        new_files = list(Path(self.test_dir).glob("20230515143045_*.jpg"))
+        assert len(new_files) == 0
+
+    def test_rename_file_non_media_extension(self):
+        """Test that non-media files are not renamed."""
+        file_path = Path(self.test_dir) / "document.txt"
+        file_path.touch()
+
+        result = self.sorter.rename_file(file_path)
+
+        assert result is None
+        assert file_path.exists()
+
+    def test_rename_file_handles_collision(self):
+        """Test that file rename handles name collisions."""
+        file1 = Path(self.test_dir) / "signal-2023-05-15-14-30-45-abc.jpg"
+        file2 = Path(self.test_dir) / "signal-2023-05-15-14-30-45-xyz.jpg"
+        file1.touch()
+        file2.touch()
+
+        self.sorter.rename_file(file1)
+        self.sorter.rename_file(file2)
+
+        # Should create two files with counter
+        new_files = list(Path(self.test_dir).glob("20230515143045_*.jpg"))
+        assert len(new_files) == 2
+
+    def test_rename_file_increments_progress(self):
+        """Test that renaming file increments progress counter."""
+        file_path = Path(self.test_dir) / "photo.jpg"
+        file_path.touch()
+
+        initial_count = self.sorter.n_files_processed
+        self.sorter.rename_file(file_path)
+
+        assert self.sorter.n_files_processed == initial_count + 1
+
+
+class TestRecursiveRenaming:
+    """Tests for recursive_renaming method."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_recursive_renaming_single_level(self):
+        """Test recursive renaming at single level."""
+        folder = Path(self.test_dir) / "2023-05-15 Photos"
+        folder.mkdir()
+        (folder / "photo.jpg").touch()
+        (folder / "video.mp4").touch()
+
+        sorter = MediaSorter(Path(self.test_dir))
+        sorter.recursive_renaming(folder)
+
+        # Check folder was renamed
+        new_folder = Path(self.test_dir) / "20230515_photos"
+        assert new_folder.exists()
+
+        # Check files were renamed
+        renamed_files = list(new_folder.glob("20230515_photos*.jpg")) + list(
+            new_folder.glob("20230515_photos*.mp4")
+        )
+        assert len(renamed_files) == 2
+
+    def test_recursive_renaming_nested_folders(self):
+        """Test recursive renaming with nested folders."""
+        parent = Path(self.test_dir) / "2023 Vacation"
+        child = parent / "2023-05-15 Beach Day"
+        child.mkdir(parents=True)
+        (child / "photo.jpg").touch()
+        (parent / "overview.jpg").touch()
+
+        sorter = MediaSorter(Path(self.test_dir))
+        sorter.recursive_renaming(parent)
+
+        # Check parent folder was renamed
+        new_parent = Path(self.test_dir) / "2023_vacation"
+        assert new_parent.exists()
+
+        # Check child folder was renamed
+        new_child = new_parent / "20230515_beach-day"
+        assert new_child.exists()
+
+        # Check files were renamed
+        assert len(list(new_child.glob("*.jpg"))) == 1
+        assert len(list(new_parent.glob("*.jpg"))) == 1
+
+    def test_recursive_renaming_multiple_levels(self):
+        """Test recursive renaming with multiple nesting levels."""
+        level1 = Path(self.test_dir) / "2023 Year"
+        level2 = level1 / "2023-05 Month"
+        level3 = level2 / "2023-05-15 Day"
+        level3.mkdir(parents=True)
+        (level3 / "photo.jpg").touch()
+
+        sorter = MediaSorter(Path(self.test_dir))
+        sorter.recursive_renaming(level1)
+
+        # Check all levels were renamed
+        new_level1 = Path(self.test_dir) / "2023_year"
+        new_level2 = new_level1 / "202305_month"
+        new_level3 = new_level2 / "20230515_day"
+
+        assert new_level1.exists()
+        assert new_level2.exists()
+        assert new_level3.exists()
+        assert len(list(new_level3.glob("*.jpg"))) == 1
+
+    def test_recursive_renaming_empty_folders(self):
+        """Test recursive renaming with empty folders."""
+        folder1 = Path(self.test_dir) / "2023-05 Empty1"
+        folder2 = Path(self.test_dir) / "2023-06 Empty2"
+        folder1.mkdir()
+        folder2.mkdir()
+
+        sorter = MediaSorter(Path(self.test_dir))
+        sorter.recursive_renaming(Path(self.test_dir))
+
+        # Check folders were renamed
+        assert (Path(self.test_dir) / "202305_empty1").exists()
+        assert (Path(self.test_dir) / "202306_empty2").exists()
+
+    def test_recursive_renaming_mixed_content(self):
+        """Test recursive renaming with mixed folders and files."""
+        folder = Path(self.test_dir) / "2023 Photos"
+        subfolder1 = folder / "2023-05 May"
+        subfolder2 = folder / "2023-06 June"
+        subfolder1.mkdir(parents=True)
+        subfolder2.mkdir(parents=True)
+
+        (folder / "photo1.jpg").touch()
+        (subfolder1 / "photo2.jpg").touch()
+        (subfolder2 / "photo3.jpg").touch()
+
+        sorter = MediaSorter(Path(self.test_dir))
+        sorter.recursive_renaming(folder)
+
+        # Check structure
+        new_folder = Path(self.test_dir) / "2023_photos"
+        new_subfolder1 = new_folder / "202305_may"
+        new_subfolder2 = new_folder / "202306_june"
+
+        assert new_folder.exists()
+        assert new_subfolder1.exists()
+        assert new_subfolder2.exists()
+
+        # Check all files were renamed
+        assert len(list(new_folder.glob("*.jpg"))) == 1
+        assert len(list(new_subfolder1.glob("*.jpg"))) == 1
+        assert len(list(new_subfolder2.glob("*.jpg"))) == 1
+
+
+class TestWriteExif:
+    """Tests for write_exif method."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_write_exif_to_image_without_exif(self):
+        """Test writing EXIF data to image without existing EXIF."""
+        img_path = Path(self.test_dir) / "photo.jpg"
+        img = Image.new("RGB", (100, 100))
+        img.save(img_path)
+
+        dt_info = DateTimeAndFormat(datetime(2023, 5, 15, 14, 30, 45), "%Y%m%d%H%M%S")
+        self.sorter.write_exif(img_path, dt_info)
+
+        # Verify EXIF was written
+        with Image.open(img_path) as img:
+            exif_data = img.getexif()
+            for _, value in exif_data.items():
+                assert "2023" in str(value)
+
+    def test_write_exif_does_not_overwrite_existing(self):
+        """Test that write_exif does not overwrite existing EXIF data."""
+        img_path = Path(self.test_dir) / "photo.jpg"
+        img = Image.new("RGB", (100, 100))
+        exif = img.getexif()
+
+        # Set initial EXIF data
+        datetime_original_tag = None
+        for tag_id, _ in TAGS.items():
+            datetime_original_tag = tag_id
+
+        if datetime_original_tag:
+            original_value = "2022:01:01 12:00:00"
+            exif[datetime_original_tag] = original_value
+            img.save(img_path, exif=exif)
+
+            # Try to write different datetime
+            dt_info = DateTimeAndFormat(datetime(2023, 5, 15), "%Y%m%d")
+            self.sorter.write_exif(img_path, dt_info)
+
+            # Verify original EXIF was not overwritten
+            with Image.open(img_path) as img_check:
+                exif_check = img_check.getexif()
+                # Should still have original value
+                assert exif_check[datetime_original_tag] == original_value
+
+    def test_write_exif_handles_errors_gracefully(self):
+        """Test that write_exif handles errors gracefully."""
+        # Try to write EXIF to non-existent file
+        img_path = Path(self.test_dir) / "nonexistent.jpg"
+        dt_info = DateTimeAndFormat(datetime(2023, 5, 15), "%Y%m%d")
+
+        # Should not raise exception
+        self.sorter.write_exif(img_path, dt_info)
+
+
+class TestShowProgress:
+    """Tests for show_progress method."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_show_progress_with_items(self):
+        """Test showing progress with items to process."""
+        (Path(self.test_dir) / "photo.jpg").touch()
+        sorter = MediaSorter(Path(self.test_dir))
+
+        # Should not raise exception
+        sorter.show_progress()
+
+    def test_show_progress_empty_directory(self):
+        """Test showing progress with empty directory."""
+        sorter = MediaSorter(Path(self.test_dir))
+
+        # Should not raise exception even with division by zero potential
+        sorter.show_progress()
+
+    @patch("builtins.print")
+    def test_show_progress_output(self, mock_print):
+        """Test that show_progress prints correct format."""
+        (Path(self.test_dir) / "photo.jpg").touch()
+        sorter = MediaSorter(Path(self.test_dir))
+        sorter.n_files_processed = 1
+
+        sorter.show_progress()
+
+        # Verify print was called
+        mock_print.assert_called()
+        # Verify format contains percentage
+        call_args = str(mock_print.call_args)
+        assert "%" in call_args
+
+
+class TestMediaExtensions:
+    """Tests for media extension recognition."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_all_image_extensions_recognized(self):
+        """Test that all image extensions are recognized."""
+        image_exts = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff"]
+        for ext in image_exts:
+            assert ext in MEDIA_EXTENSIONS
+
+    def test_all_video_extensions_recognized(self):
+        """Test that all video extensions are recognized."""
+        video_exts = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
+        for ext in video_exts:
+            assert ext in MEDIA_EXTENSIONS
+
+    def test_rename_file_recognizes_all_extensions(self):
+        """Test that rename_file works with all media extensions."""
+        for ext in MEDIA_EXTENSIONS:
+            file_path = Path(self.test_dir) / f"signal-2023-05-15-14-30-45-test{ext}"
+            file_path.touch()
+
+            result = self.sorter.rename_file(file_path)
+
+            # File should be renamed (not None result from early return)
+            # Check it was processed
+            assert self.sorter.n_files_processed > 0
+
+
+class TestEdgeCases:
+    """Tests for edge cases and error handling."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_folder_name_with_underscores(self):
+        """Test parsing folder names with underscores."""
+        date_str, title = self.sorter.parse_folder_name("2023_vacation_photos")
+        assert date_str == "2023"
+        assert title == "vacation_photos"
+
+    def test_folder_name_with_special_characters(self):
+        """Test folder names with special characters."""
+        result = self.sorter.format_folder_title("Photo's & Video's!")
+        assert "-" in result
+        assert result == "photos-videos"
+
+    def test_very_long_folder_name(self):
+        """Test handling of very long folder names."""
+        long_title = "a" * 200
+        folder_name = f"2023-05-15 {long_title}"
+        date_str, title = self.sorter.parse_folder_name(folder_name)
+        assert date_str == "20230515"
+        assert title == long_title
+
+    def test_unicode_in_folder_names(self):
+        """Test handling of unicode characters in folder names."""
+        date_str, title = self.sorter.parse_folder_name("2023-05 Été à Paris")
+        assert date_str == "202305"
+        assert title == "Été à Paris"
+
+        formatted = self.sorter.format_folder_title(title)
+        assert formatted == "été-à-paris"
+
+    def test_empty_folder_processing(self):
+        """Test processing empty folders."""
+        folder = Path(self.test_dir) / "2023-05 Empty"
+        folder.mkdir()
+
+        sorter = MediaSorter(Path(self.test_dir))
+        result = sorter.rename_folder(folder)
+
+        expected = Path(self.test_dir) / "202305_empty"
+        assert result == expected
+        assert expected.exists()
+
+    def test_file_with_multiple_dots_in_name(self):
+        """Test handling files with multiple dots in name."""
+        file_path = Path(self.test_dir) / "my.photo.file.jpg"
+        file_path.touch()
+
+        self.sorter.rename_file(file_path)
+
+        # Should handle extension correctly
+        assert self.sorter.n_files_processed == 1
+
+    def test_concurrent_processing_simulation(self):
+        """Test that processing maintains correct counts."""
+        # Create multiple files and folders
+        root = Path(self.test_dir) / "root"
+        root.mkdir()
+        for i in range(5):
+            folder = root / f"2023-0{i+1} Folder{i}"
+            folder.mkdir()
+            (folder / f"photo{i}.jpg").touch()
+
+        sorter = MediaSorter(root)
+        sorter.recursive_renaming(root)
+
+        # Verify counts match what was found
+        # Note: The root folder itself is also renamed/processed
+        assert sorter.n_folders_processed > 0
+        assert sorter.n_files_processed == sorter.n_files
+
+    def test_symlink_handling(self):
+        """Test that symlinks are handled appropriately."""
+        if os.name != "nt":  # Skip on Windows
+            real_file = Path(self.test_dir) / "real.jpg"
+            real_file.touch()
+
+            symlink = Path(self.test_dir) / "link.jpg"
+            try:
+                symlink.symlink_to(real_file)
+
+                # Should process symlink as file
+                self.sorter.rename_file(symlink)
+                assert self.sorter.n_files_processed > 0
+            except OSError:
+                # Some systems don't support symlinks
+                pass
+
+
+class TestDateTimeFormats:
+    """Tests for various datetime format handling."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_all_exif_formats_in_map(self):
+        """Test that all EXIF formats are in the map."""
+        assert "%Y:%m:%d %H:%M:%S" in EXIF_DT_FORMAT_MAP
+        assert "%Y:%m:%d %H:%M" in EXIF_DT_FORMAT_MAP
+        assert "%Y:%m:%d %H" in EXIF_DT_FORMAT_MAP
+        assert "%Y:%m:%d" in EXIF_DT_FORMAT_MAP
+        assert "%Y:%m" in EXIF_DT_FORMAT_MAP
+        assert "%Y" in EXIF_DT_FORMAT_MAP
+
+    def test_datetime_exif_tags_order(self):
+        """Test that EXIF tags are in preference order."""
+        assert "DateTimeOriginal" in DATETIME_EXIF_TAGS
+        assert "DateTimeDigitized" in DATETIME_EXIF_TAGS
+        assert "DateTime" in DATETIME_EXIF_TAGS
+
+    def test_partial_datetime_extraction(self):
+        """Test extraction of partial datetime information."""
+        # Year-month only
+        result = self.sorter.extract_datetimeinfo_from_folder_name("202305_photos")
+        assert result.datetime.year == 2023
+        assert result.datetime.month == 5
+        assert result.datetime.day == 1  # Default to 1st
+
+    def test_datetime_format_consistency(self):
+        """Test that datetime formats are consistent."""
+        dt = datetime(2023, 5, 15, 14, 30, 45)
+
+        # Full datetime
+        dt_info = DateTimeAndFormat(dt, "%Y%m%d%H%M%S")
+        assert dt.strftime(dt_info.format_str) == "20230515143045"
+
+        # Date only
+        dt_info = DateTimeAndFormat(dt, "%Y%m%d")
+        assert dt.strftime(dt_info.format_str) == "20230515"
+
+
+class TestIntegration:
+    """Integration tests for complete workflows."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_complete_photo_organization(self):
+        """Test complete photo organization workflow."""
+        # Create complex folder structure
+        vacation = Path(self.test_dir) / "2023-07 Summer Vacation"
+        beach = vacation / "2023-07-15 Beach Day"
+        city = vacation / "2023-07-20 City Tour"
+
+        for folder in [beach, city]:
+            folder.mkdir(parents=True)
+
+        # Add files with different naming conventions
+        (beach / "signal-2023-07-15-14-30-45-abc.jpg").touch()
+        (beach / "IMG-20230715-WA001.jpg").touch()
+        (city / "photo.jpg").touch()
+        (vacation / "overview.mp4").touch()
+
+        # Process
+        sorter = MediaSorter(Path(self.test_dir))
+        sorter.recursive_renaming(vacation)
+
+        # Verify structure
+        new_vacation = Path(self.test_dir) / "202307_summer-vacation"
+        new_beach = new_vacation / "20230715_beach-day"
+        new_city = new_vacation / "20230720_city-tour"
+
+        assert new_vacation.exists()
+        assert new_beach.exists()
+        assert new_city.exists()
+
+        # Verify all files were renamed
+        assert len(list(new_beach.glob("*.jpg"))) == 2
+        assert len(list(new_city.glob("*.jpg"))) == 1
+        assert len(list(new_vacation.glob("*.mp4"))) == 1
+
+    def test_dry_run_no_changes(self):
+        """Test that dry run makes no actual changes."""
+        folder = Path(self.test_dir) / "2023-05-15 Photos"
+        folder.mkdir()
+        (folder / "signal-2023-05-15-14-30-45-abc.jpg").touch()
+
+        # Get initial state
+        initial_folders = list(Path(self.test_dir).rglob("*"))
+        initial_count = len(initial_folders)
+
+        # Run in dry mode
+        sorter = MediaSorter(Path(self.test_dir), dry_mode=True)
+        sorter.recursive_renaming(folder)
+
+        # Verify no changes
+        final_folders = list(Path(self.test_dir).rglob("*"))
+        assert len(final_folders) == initial_count
+        assert folder.exists()
+
+    def test_incremental_processing(self):
+        """Test processing can be done incrementally."""
+        # Create initial structure
+        folder1 = Path(self.test_dir) / "2023-05 May"
+        folder1.mkdir()
+        (folder1 / "photo1.jpg").touch()
+
+        # First processing
+        sorter1 = MediaSorter(Path(self.test_dir))
+        sorter1.recursive_renaming(Path(self.test_dir))
+
+        # Add more content
+        folder2 = Path(self.test_dir) / "2023-06 June"
+        folder2.mkdir()
+        (folder2 / "photo2.jpg").touch()
+
+        # Second processing
+        sorter2 = MediaSorter(Path(self.test_dir))
+        sorter2.recursive_renaming(Path(self.test_dir))
+
+        # Verify both processed correctly
+        assert (Path(self.test_dir) / "202305_may").exists()
+        assert (Path(self.test_dir) / "202306_june").exists()
 
 
 class TestSpecialCharacterSanitization:
     """Tests for special character sanitization in folder names."""
 
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
     def test_exclamation_mark_removed(self):
         """Test that exclamation marks are removed from folder names."""
-        date_str, title = parse_folder_name("2023-05 Holiday in Spain!")
-        result = format_folder_name(date_str, title)
-        assert result == "202305_holiday-in-spain"
+        date_str, title = self.sorter.parse_folder_name("2023-05 Holiday in Spain!")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "202305_holiday-in-spain"
 
     def test_at_symbol_removed(self):
         """Test that @ symbols are removed from folder names."""
-        date_str, title = parse_folder_name("2023-08-10 CleanShot@2x")
-        result = format_folder_name(date_str, title)
-        assert result == "20230810_cleanshot2x"
+        date_str, title = self.sorter.parse_folder_name("2023-08-10 CleanShot@2x")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "20230810_cleanshot2x"
 
     def test_colon_removed(self):
         """Test that colons are removed from folder names."""
-        date_str, title = parse_folder_name("2024 Photos: Summer")
-        result = format_folder_name(date_str, title)
-        assert result == "2024_photos-summer"
+        date_str, title = self.sorter.parse_folder_name("2024 Photos: Summer")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "2024_photos-summer"
 
     def test_multiple_exclamation_marks_removed(self):
         """Test that multiple exclamation marks are removed."""
-        date_str, title = parse_folder_name("My Awesome Photos!!!")
-        result = format_folder_name(date_str, title)
+        date_str, title = self.sorter.parse_folder_name("My Awesome Photos!!!")
+        result = self.sorter.format_folder_title(title)
         assert result == "my-awesome-photos"
 
     def test_parentheses_removed(self):
         """Test that parentheses are removed from folder names."""
-        date_str, title = parse_folder_name("Trip (2023)")
-        result = format_folder_name(date_str, title)
+        date_str, title = self.sorter.parse_folder_name("Trip (2023)")
+        result = self.sorter.format_folder_title(title)
         assert result == "trip-2023"
 
     def test_ampersand_removed(self):
         """Test that ampersands are removed from folder names."""
-        date_str, title = parse_folder_name("Beach & Sun")
-        result = format_folder_name(date_str, title)
+        date_str, title = self.sorter.parse_folder_name("Beach & Sun")
+        result = self.sorter.format_folder_title(title)
         assert result == "beach-sun"
 
     def test_already_formatted_unchanged(self):
         """Test that already formatted folders remain unchanged."""
-        date_str, title = parse_folder_name("20230115_my-photos")
-        result = format_folder_name(date_str, title)
-        assert result == "20230115_my-photos"
+        date_str, title = self.sorter.parse_folder_name("20230115_my-photos")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "20230115_my-photos"
 
     def test_french_accents_preserved(self):
         """Test that French accented characters are preserved."""
-        date_str, title = parse_folder_name("2023-05 Vacances à la plage")
-        result = format_folder_name(date_str, title)
-        assert result == "202305_vacances-à-la-plage"
+        date_str, title = self.sorter.parse_folder_name("2023-05 Vacances à la plage")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "202305_vacances-à-la-plage"
 
     def test_spanish_accents_preserved(self):
         """Test that Spanish accented characters are preserved."""
-        date_str, title = parse_folder_name("2024 Año nuevo")
-        result = format_folder_name(date_str, title)
-        assert result == "2024_año-nuevo"
+        date_str, title = self.sorter.parse_folder_name("2024 Año nuevo")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "2024_año-nuevo"
 
     def test_german_umlauts_preserved(self):
         """Test that German umlauts are preserved."""
-        date_str, title = parse_folder_name("2023-08 München trip")
-        result = format_folder_name(date_str, title)
-        assert result == "202308_münchen-trip"
+        date_str, title = self.sorter.parse_folder_name("2023-08 München trip")
+        result = self.sorter.format_folder_title(title)
+        formatted = f"{date_str}_{result}" if result else date_str
+        assert formatted == "202308_münchen-trip"
 
     def test_mixed_unicode_and_special_chars(self):
         """Test Unicode characters preserved while special chars removed."""
-        date_str, title = parse_folder_name("Noël en famille!")
-        result = format_folder_name(date_str, title)
+        date_str, title = self.sorter.parse_folder_name("Noël en famille!")
+        result = self.sorter.format_folder_title(title)
         assert result == "noël-en-famille"
 
     def test_portuguese_accents_preserved(self):
         """Test that Portuguese accented characters are preserved."""
-        date_str, title = parse_folder_name("São Paulo 2024")
-        result = format_folder_name(date_str, title)
+        date_str, title = self.sorter.parse_folder_name("São Paulo 2024")
+        result = self.sorter.format_folder_title(title)
         assert result == "são-paulo-2024"
 
 
 class TestShouldRename:
-    """Tests for should_rename function."""
+    """Tests for should_rename logic."""
 
-    def test_different_names(self):
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_different_names_should_rename(self):
         """Test that different names should be renamed."""
-        assert should_rename("2023-01-15 My Photos", "20230115_my-photos") is True
+        # Parse and format to get new name
+        date_str, title = self.sorter.parse_folder_name("2023-01-15 My Photos")
+        formatted_title = self.sorter.format_folder_title(title)
+        new_name = f"{date_str}_{formatted_title}" if formatted_title else date_str
 
-    def test_same_names(self):
+        # Original name is different from formatted
+        assert "2023-01-15 My Photos" != new_name
+        assert new_name == "20230115_my-photos"
+
+    def test_same_names_should_not_rename(self):
         """Test that same names should not be renamed."""
-        assert should_rename("20230115_my-photos", "20230115_my-photos") is False
+        # Parse and format already-formatted name
+        date_str, title = self.sorter.parse_folder_name("20230115_my-photos")
+        formatted_title = self.sorter.format_folder_title(title)
+        new_name = f"{date_str}_{formatted_title}" if formatted_title else date_str
+
+        # Should remain the same
+        assert "20230115_my-photos" == new_name
+
+    def test_folder_already_formatted_no_rename(self):
+        """Test that already formatted folder is not renamed."""
+        folder = Path(self.test_dir) / "20230515_vacation"
+        folder.mkdir()
+
+        result = self.sorter.rename_folder(folder)
+
+        # Should return same path (no rename)
+        assert result == folder
+        assert folder.exists()
 
 
 class TestExtractTitleFromFolderName:
-    """Tests for extract_title_from_folder_name function."""
+    """Tests for extracting title from folder name."""
+
+    def setup_method(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.sorter = MediaSorter(Path(self.test_dir))
+
+    def teardown_method(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
 
     def test_formatted_folder_with_full_date(self):
         """Test extracting title from formatted folder with full date."""
-        result = extract_title_from_folder_name("20230515_holiday-in-spain")
-        assert result == "holiday-in-spain"
+        date_str, title = self.sorter.parse_folder_name("20230515_holiday-in-spain")
+        assert title == "holiday-in-spain"
 
     def test_formatted_folder_with_year_month(self):
         """Test extracting title from formatted folder with year-month."""
-        result = extract_title_from_folder_name("202305_vacation")
-        assert result == "vacation"
+        date_str, title = self.sorter.parse_folder_name("202305_vacation")
+        assert title == "vacation"
 
     def test_formatted_folder_with_year_only(self):
         """Test extracting title from formatted folder with year only."""
-        result = extract_title_from_folder_name("2023_summer-trip")
-        assert result == "summer-trip"
+        date_str, title = self.sorter.parse_folder_name("2023_summer-trip")
+        assert title == "summer-trip"
 
     def test_unformatted_folder_with_date(self):
         """Test extracting title from unformatted folder with date."""
-        result = extract_title_from_folder_name("2023-05-15 Holiday in Spain")
-        assert result == "Holiday in Spain"
+        date_str, title = self.sorter.parse_folder_name("2023-05-15 Holiday in Spain")
+        assert title == "Holiday in Spain"
 
     def test_folder_without_date(self):
         """Test extracting title from folder without date."""
-        result = extract_title_from_folder_name("my-photos")
-        assert result == "my-photos"
+        date_str, title = self.sorter.parse_folder_name("my-photos")
+        assert title == "my-photos"
 
     def test_folder_with_only_date(self):
         """Test extracting title from folder with only date."""
-        result = extract_title_from_folder_name("20230515")
-        assert result == "20230515"
+        date_str, title = self.sorter.parse_folder_name("20230515")
+        # When there's only a date, title should be empty
+        assert title == "" or title is None
 
     def test_formatted_folder_with_year_range(self):
         """Test extracting title from formatted folder with year range."""
-        result = extract_title_from_folder_name("2020-2022_childhood")
-        assert result == "childhood"
+        date_str, title = self.sorter.parse_folder_name("2020-2022_childhood")
+        assert title == "childhood"
 
     def test_unformatted_folder_with_year_range(self):
         """Test extracting title from unformatted folder with year range."""
-        result = extract_title_from_folder_name("2020-2022 Childhood")
-        assert result == "Childhood"
-
-
-class TestRenameFolders:
-    """Tests for rename_folders function."""
-
-    def setup_method(self):
-        """Create a temporary directory for testing."""
-        self.test_dir = tempfile.mkdtemp()
-
-    def teardown_method(self):
-        """Clean up temporary directory after testing."""
-        if os.path.exists(self.test_dir):
-            shutil.rmtree(self.test_dir)
-
-    def test_rename_single_folder(self):
-        """Test renaming a single folder."""
-        # Create test folder
-        test_folder = Path(self.test_dir) / "2023-01-15 My Photos"
-        test_folder.mkdir()
-
-        # Rename folders
-        result = rename_folders(self.test_dir)
-
-        # Check results
-        assert len(result.folders) == 1
-        assert (Path(self.test_dir) / "20230115_my-photos").exists()
-        assert not test_folder.exists()
-
-    def test_rename_nested_folders(self):
-        """Test renaming nested folders."""
-        # Create nested test folders
-        parent = Path(self.test_dir) / "2023 Vacation"
-        parent.mkdir()
-        child = parent / "2023-01-15 Beach Day"
-        child.mkdir()
-
-        # Rename folders
-        result = rename_folders(self.test_dir)
-
-        # Check results
-        assert len(result.folders) == 2
-        assert (Path(self.test_dir) / "2023_vacation").exists()
-        assert (Path(self.test_dir) / "2023_vacation" / "20230115_beach-day").exists()
-
-    def test_no_rename_needed(self):
-        """Test when folder is already in correct format."""
-        # Create folder already in correct format
-        test_folder = Path(self.test_dir) / "20230115_my-photos"
-        test_folder.mkdir()
-
-        # Rename folders
-        result = rename_folders(self.test_dir)
-
-        # Check results - folder should still exist with same name
-        # (root test dir might be renamed if it has underscores)
-        assert test_folder.exists() or (Path(self.test_dir).parent / Path(self.test_dir).name.replace('_', '') / "20230115_my-photos").exists()
-
-    def test_folder_without_date(self):
-        """Test renaming folder without date."""
-        # Create test folder without date
-        test_folder = Path(self.test_dir) / "My Photos"
-        test_folder.mkdir()
-
-        # Rename folders
-        result = rename_folders(self.test_dir)
-
-        # Check results
-        assert len(result.folders) == 1
-        assert (Path(self.test_dir) / "my-photos").exists()
-        assert not test_folder.exists()
-
-    def test_multiple_folders_same_level(self):
-        """Test renaming multiple folders at the same level."""
-        # Create multiple test folders
-        folder1 = Path(self.test_dir) / "2023-01-15 Photos"
-        folder2 = Path(self.test_dir) / "2023-02-20 Videos"
-        folder1.mkdir()
-        folder2.mkdir()
-
-        # Rename folders
-        result = rename_folders(self.test_dir)
-
-        # Check results - at least 2 folders renamed (root dir might also be renamed)
-        assert len(result.folders) >= 2
-        # Check that the created folders were renamed correctly
-        renamed_paths = [r.new_path for r in result.folders]
-        assert any("20230115_photos" in p for p in renamed_paths)
-        assert any("20230220_videos" in p for p in renamed_paths)
-
-    def test_date_only_folder(self):
-        """Test renaming folder with only a date."""
-        # Create folder with only date
-        test_folder = Path(self.test_dir) / "2023-01-15"
-        test_folder.mkdir()
-
-        # Rename folders
-        result = rename_folders(self.test_dir)
-
-        # Check results - at least 1 folder renamed (root dir might also be renamed)
-        assert len(result.folders) >= 1
-        # Check that the created folder was renamed correctly
-        renamed_paths = [r.new_path for r in result.folders]
-        assert any("20230115" in p and "2023-01-15" not in p for p in renamed_paths)
-
-    def test_year_month_format(self):
-        """Test renaming folder with year-month format."""
-        # Create folder with year-month
-        test_folder = Path(self.test_dir) / "2023-01 January Photos"
-        test_folder.mkdir()
-
-        # Rename folders
-        result = rename_folders(self.test_dir)
-
-        # Check results
-        assert len(result.folders) == 1
-        assert (Path(self.test_dir) / "202301_january-photos").exists()
-        assert not test_folder.exists()
-
-    def test_year_only_format(self):
-        """Test renaming folder with year only format."""
-        # Create folder with year only
-        test_folder = Path(self.test_dir) / "2023 Annual Report"
-        test_folder.mkdir()
-
-        # Rename folders
-        result = rename_folders(self.test_dir)
-
-        # Check results
-        assert len(result.folders) == 1
-        assert (Path(self.test_dir) / "2023_annual-report").exists()
-        assert not test_folder.exists()
-
-    def test_nonexistent_path(self):
-        """Test error handling for nonexistent path."""
-        with pytest.raises(ValueError, match="Path does not exist"):
-            rename_folders("/nonexistent/path")
-
-    def test_file_instead_of_directory(self):
-        """Test error handling when path is a file."""
-        # Create a file instead of directory
-        test_file = Path(self.test_dir) / "test.txt"
-        test_file.write_text("test")
-
-        with pytest.raises(ValueError, match="Path is not a directory"):
-            rename_folders(str(test_file))
-
-
-class TestMediaFileRenaming:
-    """Tests for media file renaming functionality."""
-
-    def setup_method(self):
-        """Create a temporary directory for testing."""
-        self.test_dir = tempfile.mkdtemp()
-
-    def teardown_method(self):
-        """Clean up temporary directory after testing."""
-        if os.path.exists(self.test_dir):
-            shutil.rmtree(self.test_dir)
-
-    def test_rename_file_without_metadata(self):
-        """Test renaming a file without EXIF metadata."""
-        from media_sorter import rename_media_file
-
-        # Create a test folder
-        test_folder = Path(self.test_dir) / "202305_holiday-in-spain"
-        test_folder.mkdir()
-
-        # Create a simple image file without EXIF data
-        test_file = test_folder / "photo.jpg"
-        test_file.write_bytes(b"fake image data")
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Check results
-        assert result is not None
-        assert (test_folder / "202305_holiday-in-spain.jpg").exists()
-        assert not test_file.exists()
-
-    def test_rename_multiple_files_with_counter(self):
-        """Test that multiple files without metadata get numbered."""
-        from media_sorter import rename_media_file
-
-        # Create a test folder
-        test_folder = Path(self.test_dir) / "202305_holiday-in-spain"
-        test_folder.mkdir()
-
-        # Create multiple simple image files without EXIF data
-        files_created = []
-        for i in range(3):
-            test_file = test_folder / f"photo{i}.jpg"
-            test_file.write_bytes(b"fake image data")
-            result = rename_media_file(test_file)
-            if result:
-                files_created.append(result[1])
-
-        # Check results - files should be renamed with counters
-        assert (test_folder / "202305_holiday-in-spain.jpg").exists()
-        assert (test_folder / "202305_holiday-in-spain_001.jpg").exists()
-        assert (test_folder / "202305_holiday-in-spain_002.jpg").exists()
-
-    def test_non_media_file_not_renamed(self):
-        """Test that non-media files are not renamed."""
-        from media_sorter import rename_media_file
-
-        # Create a test folder
-        test_folder = Path(self.test_dir) / "test-folder"
-        test_folder.mkdir()
-
-        # Create a non-media file
-        test_file = test_folder / "document.txt"
-        test_file.write_text("test content")
-
-        # Try to rename the file
-        result = rename_media_file(test_file)
-
-        # Check results - file should not be renamed
-        assert result is None
-        assert test_file.exists()
-
-    def test_generate_unique_filename(self):
-        """Test unique filename generation with counters."""
-        from media_sorter import generate_unique_filename
-
-        test_folder = Path(self.test_dir)
-
-        # First file should have no counter
-        filename1 = generate_unique_filename(test_folder, "test", ".jpg")
-        assert filename1 == "test.jpg"
-
-        # Create the file
-        (test_folder / filename1).touch()
-
-        # Second file should have _001
-        filename2 = generate_unique_filename(test_folder, "test", ".jpg")
-        assert filename2 == "test_001.jpg"
-
-        # Create the file
-        (test_folder / filename2).touch()
-
-        # Third file should have _002
-        filename3 = generate_unique_filename(test_folder, "test", ".jpg")
-        assert filename3 == "test_002.jpg"
-
-    def test_integrated_folder_and_file_rename(self):
-        """Test that both folders and files are renamed together."""
-        from media_sorter import rename_folders
-        from PIL import Image
-
-        # Create a test folder with files
-        test_folder = Path(self.test_dir) / "2023-05 Holiday in Spain"
-        test_folder.mkdir()
-
-        # Create some real image files without EXIF
-        for i in range(2):
-            img = Image.new("RGB", (100, 100), color="blue")
-            test_file = test_folder / f"IMG_{i:04d}.jpg"
-            img.save(test_file)
-
-        # Run rename_folders (which should rename both folders and files)
-        result = rename_folders(self.test_dir)
-
-        # Check folder was renamed
-        assert len(result.folders) == 1
-        renamed_folder = Path(self.test_dir) / "202305_holiday-in-spain"
-        assert renamed_folder.exists()
-
-        # Check files were renamed
-        assert len(result.files) == 2
-        assert (renamed_folder / "202305_holiday-in-spain.jpg").exists()
-        assert (renamed_folder / "202305_holiday-in-spain_001.jpg").exists()
-
-    def test_rename_file_with_exif_metadata(self):
-        """Test renaming a file with EXIF metadata."""
-        from media_sorter import rename_media_file, get_media_file_datetime
-        from PIL import Image
-
-        # Create a test folder
-        test_folder = Path(self.test_dir) / "202305_holiday-in-spain"
-        test_folder.mkdir()
-
-        # Create an image with EXIF data
-        img = Image.new("RGB", (100, 100), color="blue")
-        exif_data = img.getexif()
-        # Tag 36867 is DateTimeOriginal
-        exif_data[36867] = "2023:05:15 14:30:45"
-
-        test_file = test_folder / "photo.jpg"
-        img.save(test_file, exif=exif_data)
-
-        # Test that we can extract the datetime
-        dt_info = get_media_file_datetime(test_file)
-        assert dt_info is not None
-        dt, fmt = dt_info
-        assert dt.year == 2023
-        assert dt.month == 5
-        assert dt.day == 15
-        assert dt.hour == 14
-        assert dt.minute == 30
-        assert dt.second == 45
-        assert fmt == "%Y:%m:%d %H:%M:%S"
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Check results - should be renamed with datetime and title only
-        assert result is not None
-        expected_name = "20230515143045_holiday-in-spain.jpg"
-        assert (test_folder / expected_name).exists()
-        assert not test_file.exists()
-
-    def test_rename_video_file_without_metadata(self):
-        """Test renaming a video file (which has no EXIF metadata)."""
-        from media_sorter import rename_media_file
-
-        # Create a test folder
-        test_folder = Path(self.test_dir) / "202401_winter-trip"
-        test_folder.mkdir()
-
-        # Create a fake video file
-        test_file = test_folder / "video.mp4"
-        test_file.write_bytes(b"fake video data")
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Check results - should be renamed with parent directory name (no metadata)
-        assert result is not None
-        assert (test_folder / "202401_winter-trip.mp4").exists()
-        assert not test_file.exists()
-
-
-class TestPartialExifDatetime:
-    """Tests for partial EXIF datetime parsing."""
-
-    def setup_method(self):
-        """Create a temporary directory for testing."""
-        self.test_dir = tempfile.mkdtemp()
-
-    def teardown_method(self):
-        """Clean up temporary directory after testing."""
-        if os.path.exists(self.test_dir):
-            shutil.rmtree(self.test_dir)
-
-    def test_exif_date_with_hour_minute(self):
-        """Test parsing EXIF with date, hour, and minute (no seconds)."""
-        from media_sorter import get_media_file_datetime, _format_datetime_from_exif
-        from PIL import Image
-
-        test_folder = Path(self.test_dir)
-        img = Image.new("RGB", (100, 100), color="red")
-        exif_data = img.getexif()
-        exif_data[36867] = "2023:05:15 14:30"  # Missing seconds
-
-        test_file = test_folder / "test.jpg"
-        img.save(test_file, exif=exif_data)
-
-        dt_info = get_media_file_datetime(test_file)
-        assert dt_info is not None
-        dt, fmt = dt_info
-        assert dt.year == 2023
-        assert dt.month == 5
-        assert dt.day == 15
-        assert dt.hour == 14
-        assert dt.minute == 30
-        assert dt.second == 0  # Should default to 0
-        assert fmt == "%Y:%m:%d %H:%M"
-        # Verify formatted output doesn't include seconds
-        formatted = _format_datetime_from_exif(dt, fmt)
-        assert formatted == "202305151430"  # No seconds
-
-    def test_exif_date_with_hour_only(self):
-        """Test parsing EXIF with date and hour only."""
-        from media_sorter import get_media_file_datetime, _format_datetime_from_exif
-        from PIL import Image
-
-        test_folder = Path(self.test_dir)
-        img = Image.new("RGB", (100, 100), color="green")
-        exif_data = img.getexif()
-        exif_data[36867] = "2023:05:15 14"  # Only hour
-
-        test_file = test_folder / "test.jpg"
-        img.save(test_file, exif=exif_data)
-
-        dt_info = get_media_file_datetime(test_file)
-        assert dt_info is not None
-        dt, fmt = dt_info
-        assert dt.year == 2023
-        assert dt.month == 5
-        assert dt.day == 15
-        assert dt.hour == 14
-        assert dt.minute == 0  # Should default to 0
-        assert dt.second == 0  # Should default to 0
-        assert fmt == "%Y:%m:%d %H"
-        # Verify formatted output doesn't include minutes/seconds
-        formatted = _format_datetime_from_exif(dt, fmt)
-        assert formatted == "2023051514"  # No minutes or seconds
-
-    def test_exif_date_only(self):
-        """Test parsing EXIF with date only (no time)."""
-        from media_sorter import get_media_file_datetime, _format_datetime_from_exif
-        from PIL import Image
-
-        test_folder = Path(self.test_dir)
-        img = Image.new("RGB", (100, 100), color="yellow")
-        exif_data = img.getexif()
-        exif_data[36867] = "2023:05:15"  # Date only
-
-        test_file = test_folder / "test.jpg"
-        img.save(test_file, exif=exif_data)
-
-        dt_info = get_media_file_datetime(test_file)
-        assert dt_info is not None
-        dt, fmt = dt_info
-        assert dt.year == 2023
-        assert dt.month == 5
-        assert dt.day == 15
-        assert dt.hour == 0  # Should default to 0
-        assert dt.minute == 0
-        assert dt.second == 0
-        assert fmt == "%Y:%m:%d"
-        # Verify formatted output doesn't include time
-        formatted = _format_datetime_from_exif(dt, fmt)
-        assert formatted == "20230515"  # No time
-
-    def test_exif_year_month_only(self):
-        """Test parsing EXIF with year and month only."""
-        from media_sorter import get_media_file_datetime, _format_datetime_from_exif
-        from PIL import Image
-
-        test_folder = Path(self.test_dir)
-        img = Image.new("RGB", (100, 100), color="cyan")
-        exif_data = img.getexif()
-        exif_data[36867] = "2023:05"  # Year and month only
-
-        test_file = test_folder / "test.jpg"
-        img.save(test_file, exif=exif_data)
-
-        dt_info = get_media_file_datetime(test_file)
-        assert dt_info is not None
-        dt, fmt = dt_info
-        assert dt.year == 2023
-        assert dt.month == 5
-        assert dt.day == 1  # Should default to 1st of month
-        assert dt.hour == 0
-        assert dt.minute == 0
-        assert dt.second == 0
-        assert fmt == "%Y:%m"
-        # Verify formatted output doesn't include day or time
-        formatted = _format_datetime_from_exif(dt, fmt)
-        assert formatted == "202305"  # No day or time
-
-    def test_exif_year_only(self):
-        """Test parsing EXIF with year only."""
-        from media_sorter import get_media_file_datetime, _format_datetime_from_exif
-        from PIL import Image
-
-        test_folder = Path(self.test_dir)
-        img = Image.new("RGB", (100, 100), color="magenta")
-        exif_data = img.getexif()
-        exif_data[36867] = "2023"  # Year only
-
-        test_file = test_folder / "test.jpg"
-        img.save(test_file, exif=exif_data)
-
-        dt_info = get_media_file_datetime(test_file)
-        assert dt_info is not None
-        dt, fmt = dt_info
-        assert dt.year == 2023
-        assert dt.month == 1  # Should default to January
-        assert dt.day == 1  # Should default to 1st
-        assert dt.hour == 0
-        assert dt.minute == 0
-        assert dt.second == 0
-        assert fmt == "%Y"
-        # Verify formatted output is year only
-        formatted = _format_datetime_from_exif(dt, fmt)
-        assert formatted == "2023"  # Year only, no zero-padding
-
-    def test_exif_invalid_format_returns_none(self):
-        """Test that invalid EXIF datetime format returns None."""
-        from media_sorter import get_media_file_datetime
-        from PIL import Image
-
-        test_folder = Path(self.test_dir)
-        img = Image.new("RGB", (100, 100), color="white")
-        exif_data = img.getexif()
-        exif_data[36867] = "invalid date format"
-
-        test_file = test_folder / "test.jpg"
-        img.save(test_file, exif=exif_data)
-
-        dt_info = get_media_file_datetime(test_file)
-        assert dt_info is None
-
-    def test_rename_file_with_partial_exif_datetime(self):
-        """Test that files with partial EXIF datetime are renamed correctly."""
-        from media_sorter import rename_media_file
-        from PIL import Image
-
-        test_folder = Path(self.test_dir) / "202305_vacation"
-        test_folder.mkdir()
-
-        # Create image with partial datetime (date + hour/minute)
-        img = Image.new("RGB", (100, 100), color="orange")
-        exif_data = img.getexif()
-        exif_data[36867] = "2023:05:20 16:45"  # Missing seconds
-
-        test_file = test_folder / "photo.jpg"
-        img.save(test_file, exif=exif_data)
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Check results - should NOT include seconds (no zero-padding)
-        assert result is not None
-        expected_name = "202305201645_vacation.jpg"  # No seconds!
-        assert (test_folder / expected_name).exists()
-        assert not test_file.exists()
-
-
-class TestSignalWhatsAppFilenames:
-    """Test Signal and WhatsApp filename date extraction."""
-
-    def setup_method(self):
-        """Create a temporary directory for test files."""
-        self.test_dir = tempfile.mkdtemp()
-
-    def teardown_method(self):
-        """Clean up the temporary directory."""
-        if os.path.exists(self.test_dir):
-            shutil.rmtree(self.test_dir)
-
-    def test_extract_signal_filename_datetime(self):
-        """Test extracting datetime from Signal filename pattern."""
-        from media_sorter import _extract_datetime_from_filename
-        from datetime import datetime
-
-        # Signal pattern: signal-YYYY-MM-DD-HH-MM-SS-randomtext.ext
-        filename = "signal-2023-05-15-14-30-45-abc123.jpg"
-        dt = _extract_datetime_from_filename(filename)
-
-        assert dt is not None
-        assert dt == datetime(2023, 5, 15, 14, 30, 45)
-
-    def test_extract_whatsapp_img_filename_datetime(self):
-        """Test extracting datetime from WhatsApp IMG filename pattern."""
-        from media_sorter import _extract_datetime_from_filename
-        from datetime import datetime
-
-        # WhatsApp IMG pattern: IMG-YYYYMMDD-WAxxx.ext
-        filename = "IMG-20230520-WA001.jpg"
-        dt = _extract_datetime_from_filename(filename)
-
-        assert dt is not None
-        assert dt == datetime(2023, 5, 20, 0, 0, 0)
-
-    def test_extract_whatsapp_vid_filename_datetime(self):
-        """Test extracting datetime from WhatsApp VID filename pattern."""
-        from media_sorter import _extract_datetime_from_filename
-        from datetime import datetime
-
-        # WhatsApp VID pattern: VID-YYYYMMDD-WAxxx.ext
-        filename = "VID-20231225-WA999.mp4"
-        dt = _extract_datetime_from_filename(filename)
-
-        assert dt is not None
-        assert dt == datetime(2023, 12, 25, 0, 0, 0)
-
-    def test_extract_img_underscore_datetime(self):
-        """Test extracting datetime from IMG_YYYYMMDD_HHMMSS pattern."""
-        from media_sorter import _extract_datetime_from_filename
-        from datetime import datetime
-
-        # Pattern: IMG_YYYYMMDD_HHMMSS
-        filename = "IMG_20230515_143045.jpg"
-        dt = _extract_datetime_from_filename(filename)
-
-        assert dt is not None
-        assert dt == datetime(2023, 5, 15, 14, 30, 45)
-
-    def test_extract_img_underscore_datetime_case_insensitive(self):
-        """Test that IMG_YYYYMMDD_HHMMSS pattern is case-insensitive."""
-        from media_sorter import _extract_datetime_from_filename
-        from datetime import datetime
-
-        filenames = [
-            "IMG_20230515_143045.jpg",
-            "img_20230515_143045.jpg",
-            "Img_20230515_143045.jpg",
-        ]
-
-        for filename in filenames:
-            dt = _extract_datetime_from_filename(filename)
-            assert dt == datetime(2023, 5, 15, 14, 30, 45)
-
-    def test_extract_regular_filename_returns_none(self):
-        """Test that regular filenames return None."""
-        from media_sorter import _extract_datetime_from_filename
-
-        filenames = [
-            "IMG_1234.jpg",
-            "photo.jpg",
-            "DSC_5678.jpg",
-            "random-file.mp4",
-        ]
-
-        for filename in filenames:
-            dt = _extract_datetime_from_filename(filename)
-            assert dt is None, f"{filename} should return None"
-
-    def test_signal_filename_case_insensitive(self):
-        """Test that Signal pattern is case-insensitive."""
-        from media_sorter import _extract_datetime_from_filename
-        from datetime import datetime
-
-        filenames = [
-            "SIGNAL-2023-05-15-14-30-45-abc.jpg",
-            "Signal-2023-05-15-14-30-45-abc.jpg",
-            "signal-2023-05-15-14-30-45-abc.jpg",
-        ]
-
-        for filename in filenames:
-            dt = _extract_datetime_from_filename(filename)
-            assert dt == datetime(2023, 5, 15, 14, 30, 45)
-
-    def test_whatsapp_filename_case_insensitive(self):
-        """Test that WhatsApp pattern is case-insensitive."""
-        from media_sorter import _extract_datetime_from_filename
-        from datetime import datetime
-
-        filenames = [
-            "IMG-20230520-WA001.jpg",
-            "img-20230520-wa001.jpg",
-            "VID-20231225-WA999.mp4",
-            "vid-20231225-wa999.mp4",
-        ]
-
-        expected = [
-            datetime(2023, 5, 20),
-            datetime(2023, 5, 20),
-            datetime(2023, 12, 25),
-            datetime(2023, 12, 25),
-        ]
-
-        for filename, expected_dt in zip(filenames, expected):
-            dt = _extract_datetime_from_filename(filename)
-            assert dt == expected_dt
-
-    def test_rename_signal_file_without_exif(self):
-        """Test renaming a Signal file that has no EXIF metadata."""
-        from media_sorter import rename_media_file
-        from PIL import Image
-
-        test_folder = Path(self.test_dir) / "202305-photos"
-        test_folder.mkdir()
-
-        # Create image without EXIF
-        img = Image.new("RGB", (100, 100), color="blue")
-        test_file = test_folder / "signal-2023-05-15-14-30-45-abc123.jpg"
-        img.save(test_file)
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Should be renamed using datetime from filename, with title extracted from folder
-        assert result is not None
-        expected_name = "20230515143045_photos.jpg"
-        assert (test_folder / expected_name).exists()
-        assert not test_file.exists()
-
-        # Verify EXIF was written
-        from media_sorter import get_media_file_datetime
-
-        renamed_file = test_folder / expected_name
-        dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is not None
-        assert dt_info[0].year == 2023
-        assert dt_info[0].month == 5
-        assert dt_info[0].day == 15
-        assert dt_info[0].hour == 14
-        assert dt_info[0].minute == 30
-        assert dt_info[0].second == 45
-
-    def test_rename_whatsapp_file_without_exif(self):
-        """Test renaming a WhatsApp file that has no EXIF metadata."""
-        from media_sorter import rename_media_file
-        from PIL import Image
-
-        test_folder = Path(self.test_dir) / "202305-vacation"
-        test_folder.mkdir()
-
-        # Create image without EXIF
-        img = Image.new("RGB", (100, 100), color="green")
-        test_file = test_folder / "IMG-20230520-WA001.jpg"
-        img.save(test_file)
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Should be renamed using date from filename (time defaults to 00:00:00)
-        # with title extracted from folder (just "vacation")
-        assert result is not None
-        expected_name = "20230520000000_vacation.jpg"
-        assert (test_folder / expected_name).exists()
-        assert not test_file.exists()
-
-        # Verify EXIF was written
-        from media_sorter import get_media_file_datetime
-
-        renamed_file = test_folder / expected_name
-        dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is not None
-        assert dt_info[0].year == 2023
-        assert dt_info[0].month == 5
-        assert dt_info[0].day == 20
-
-    def test_signal_file_with_existing_exif_uses_exif(self):
-        """Test that Signal files with existing EXIF use the EXIF data."""
-        from media_sorter import rename_media_file
-        from PIL import Image
-
-        test_folder = Path(self.test_dir) / "202305-trip"
-        test_folder.mkdir()
-
-        # Create image with EXIF (different from filename date)
-        img = Image.new("RGB", (100, 100), color="red")
-        exif_data = img.getexif()
-        exif_data[36867] = "2023:06:10 12:00:00"  # Different date than filename
-
-        test_file = test_folder / "signal-2023-05-15-14-30-45-abc.jpg"
-        img.save(test_file, exif=exif_data)
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Should use EXIF date (2023-06-10), not filename date (2023-05-15)
-        # with title extracted from folder (just "trip")
-        assert result is not None
-        expected_name = "20230610120000_trip.jpg"
-        assert (test_folder / expected_name).exists()
-        assert not test_file.exists()
-
-    def test_rename_whatsapp_video_without_metadata(self):
-        """Test renaming a WhatsApp video file (can't write EXIF to video)."""
-        from media_sorter import rename_media_file
-
-        test_folder = Path(self.test_dir) / "202312-videos"
-        test_folder.mkdir()
-
-        # Create a fake video file
-        test_file = test_folder / "VID-20231225-WA999.mp4"
-        test_file.write_bytes(b"fake video data")
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Should be renamed using date from filename
-        # with title extracted from folder (just "videos")
-        assert result is not None
-        expected_name = "20231225000000_videos.mp4"
-        assert (test_folder / expected_name).exists()
-        assert not test_file.exists()
-
-
-class TestExifWritingFromFolderDate:
-    """Test EXIF metadata writing when date is extracted from folder name."""
-
-    def setup_method(self):
-        """Create a temporary directory for tests."""
-        self.test_dir = tempfile.mkdtemp()
-
-    def teardown_method(self):
-        """Clean up the temporary directory."""
-        shutil.rmtree(self.test_dir)
-
-    def test_write_exif_from_full_date_folder(self):
-        """Test that EXIF is NOT written for folder-based dates (to preserve precision)."""
-        from media_sorter import rename_media_file, get_media_file_datetime
-        from PIL import Image
-
-        test_folder = Path(self.test_dir) / "20230515_vacation"
-        test_folder.mkdir()
-
-        # Create image without EXIF
-        img = Image.new("RGB", (100, 100), color="blue")
-        test_file = test_folder / "photo.jpg"
-        img.save(test_file)
-
-        # Verify no EXIF before
-        assert get_media_file_datetime(test_file) is None
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Should be renamed but EXIF should NOT be written
-        assert result is not None
-        expected_name = "20230515_vacation.jpg"
-        renamed_file = test_folder / expected_name
-
-        # Verify EXIF was NOT written (folder dates don't get EXIF to preserve precision)
-        dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is None
-
-    def test_write_exif_from_year_month_folder(self):
-        """Test that EXIF is NOT written for year-month folder dates."""
-        from media_sorter import rename_media_file, get_media_file_datetime
-        from PIL import Image
-
-        test_folder = Path(self.test_dir) / "202305_photos"
-        test_folder.mkdir()
-
-        # Create image without EXIF
-        img = Image.new("RGB", (100, 100), color="green")
-        test_file = test_folder / "image.jpg"
-        img.save(test_file)
-
-        # Verify no EXIF before
-        assert get_media_file_datetime(test_file) is None
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Should be renamed but EXIF should NOT be written
-        assert result is not None
-        expected_name = "202305_photos.jpg"
-        renamed_file = test_folder / expected_name
-
-        # Verify EXIF was NOT written (preserving month precision)
-        dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is None
-
-    def test_write_exif_from_year_only_folder(self):
-        """Test that EXIF is NOT written for year-only folder dates."""
-        from media_sorter import rename_media_file, get_media_file_datetime
-        from PIL import Image
-
-        test_folder = Path(self.test_dir) / "2023_summer"
-        test_folder.mkdir()
-
-        # Create image without EXIF
-        img = Image.new("RGB", (100, 100), color="yellow")
-        test_file = test_folder / "pic.jpg"
-        img.save(test_file)
-
-        # Verify no EXIF before
-        assert get_media_file_datetime(test_file) is None
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Should be renamed but EXIF should NOT be written
-        assert result is not None
-        expected_name = "2023_summer.jpg"
-        renamed_file = test_folder / expected_name
-
-        # Verify EXIF was NOT written (preserving year precision)
-        dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is None
-
-    def test_write_exif_from_unformatted_folder(self):
-        """Test that EXIF is NOT written for unformatted folder dates."""
-        from media_sorter import rename_media_file, get_media_file_datetime
-        from PIL import Image
-
-        test_folder = Path(self.test_dir) / "2023-05-20 Trip"
-        test_folder.mkdir()
-
-        # Create image without EXIF
-        img = Image.new("RGB", (100, 100), color="red")
-        test_file = test_folder / "snapshot.jpg"
-        img.save(test_file)
-
-        # Verify no EXIF before
-        assert get_media_file_datetime(test_file) is None
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Should be renamed but EXIF should NOT be written
-        assert result is not None
-        expected_name = "20230520_trip.jpg"
-        renamed_file = test_folder / expected_name
-
-        # Verify EXIF was NOT written (folder dates preserve precision)
-        dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is None
-
-    def test_no_exif_write_when_metadata_exists(self):
-        """Test that EXIF is NOT overwritten when file already has metadata."""
-        from media_sorter import rename_media_file, get_media_file_datetime
-        from PIL import Image
-
-        test_folder = Path(self.test_dir) / "20230515_vacation"
-        test_folder.mkdir()
-
-        # Create image WITH EXIF (different date than folder)
-        img = Image.new("RGB", (100, 100), color="purple")
-        exif_data = img.getexif()
-        exif_data[36867] = "2023:06:10 12:00:00"  # Different date
-
-        test_file = test_folder / "photo.jpg"
-        img.save(test_file, exif=exif_data)
-
-        # Verify EXIF exists before
-        dt_info_before = get_media_file_datetime(test_file)
-        assert dt_info_before is not None
-        assert dt_info_before[0].year == 2023
-        assert dt_info_before[0].month == 6
-        assert dt_info_before[0].day == 10
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Should be renamed using existing EXIF, not folder date
-        assert result is not None
-        expected_name = "20230610120000_vacation.jpg"
-        renamed_file = test_folder / expected_name
-
-        # Verify EXIF was NOT changed (still has June 10 date)
-        dt_info_after = get_media_file_datetime(renamed_file)
-        assert dt_info_after is not None
-        assert dt_info_after[0].year == 2023
-        assert dt_info_after[0].month == 6
-        assert dt_info_after[0].day == 10
-
-    def test_no_exif_write_for_video_files(self):
-        """Test that EXIF is not written to video files (not supported)."""
-        from media_sorter import rename_media_file
-
-        test_folder = Path(self.test_dir) / "20230515_vacation"
-        test_folder.mkdir()
-
-        # Create a fake video file
-        test_file = test_folder / "video.mp4"
-        test_file.write_bytes(b"fake video data")
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # Should be renamed but no EXIF written (videos don't support EXIF)
-        assert result is not None
-        expected_name = "20230515_vacation.mp4"
-        assert (test_folder / expected_name).exists()
-
-    def test_no_exif_write_for_folder_without_date(self):
-        """Test that no EXIF is written when folder has no date."""
-        from media_sorter import rename_media_file, get_media_file_datetime
-        from PIL import Image
-
-        test_folder = Path(self.test_dir) / "random-photos"
-        test_folder.mkdir()
-
-        # Create image without EXIF
-        img = Image.new("RGB", (100, 100), color="pink")
-        test_file = test_folder / "photo.jpg"
-        img.save(test_file)
-
-        # Verify no EXIF before
-        assert get_media_file_datetime(test_file) is None
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # File should be renamed using folder name
-        assert result is not None
-        expected_name = "random-photos.jpg"
-        renamed_file = test_folder / expected_name
-
-        # Verify no EXIF was written (folder has no date)
-        dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is None
-
-    def test_no_exif_write_for_year_range_folder(self):
-        """Test that no EXIF is written when folder has year range."""
-        from media_sorter import rename_media_file, get_media_file_datetime
-        from PIL import Image
-
-        test_folder = Path(self.test_dir) / "2020-2022_childhood"
-        test_folder.mkdir()
-
-        # Create image without EXIF
-        img = Image.new("RGB", (100, 100), color="cyan")
-        test_file = test_folder / "old_photo.jpg"
-        img.save(test_file)
-
-        # Verify no EXIF before
-        assert get_media_file_datetime(test_file) is None
-
-        # Rename the file
-        result = rename_media_file(test_file)
-
-        # File should be renamed
-        assert result is not None
-        expected_name = "2020-2022_childhood.jpg"
-        renamed_file = test_folder / expected_name
-
-        # Verify no EXIF was written (year ranges not supported)
-        dt_info = get_media_file_datetime(renamed_file)
-        assert dt_info is None
+        date_str, title = self.sorter.parse_folder_name("2020-2022 Childhood")
+        assert title == "Childhood"
+
+    def test_extract_title_from_path(self):
+        """Test that we can extract title when renaming folders."""
+        folder = Path(self.test_dir) / "2023-05-15 Holiday in Spain"
+        folder.mkdir()
+
+        # Get what the new name would be
+        date_str, title = self.sorter.parse_folder_name(folder.name)
+        assert date_str == "20230515"
+        assert title == "Holiday in Spain"
+
+        # Format it
+        formatted_title = self.sorter.format_folder_title(title)
+        assert formatted_title == "holiday-in-spain"

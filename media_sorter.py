@@ -1,22 +1,11 @@
-#!/usr/bin/env python3
-"""
-Media Sorter - Organize photos and videos with intelligent renaming.
-
-Renames folders and media files based on dates and metadata:
-- Folders: YYYYMMDD_title or YYYY-YYYY_title (for date ranges)
-- Files: Uses EXIF metadata when available, parent folder name as fallback
-- Preserves Unicode characters (accents, etc.)
-- Removes special characters (@, !, :, etc.)
-"""
-
 import argparse
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple
 from PIL import Image, ExifTags
+from collections import namedtuple
 
 # Supported media file extensions
 MEDIA_EXTENSIONS = {
@@ -36,875 +25,518 @@ MEDIA_EXTENSIONS = {
 # EXIF datetime tags in order of preference
 DATETIME_EXIF_TAGS = ["DateTimeOriginal", "DateTimeDigitized", "DateTime"]
 
-# Constants
-MAX_DATE_LENGTH = 10  # Length of "YYYY-MM-DD"
-MAX_FILENAME_COUNTER = 999
+# All supported datetime formats, from most specific to least specific
+# Map format strings to output formats
+EXIF_DT_FORMAT_MAP = {
+    "%Y:%m:%d %H:%M:%S": "%Y%m%d%H%M%S",  # Standard EXIF: "2023:05:15 14:30:45"
+    "%Y:%m:%d %H:%M": "%Y%m%d%H%M",  # Date with hour and minute: "2023:05:15 14:30"
+    "%Y:%m:%d %H": "%Y%m%d%H",  # Date with hour: "2023:05:15 14"
+    "%Y:%m:%d": "%Y%m%d",  # Date only: "2023:05:15"
+    "%Y:%m": "%Y%m",  # Year and month: "2023:05"
+    "%Y": "%Y",  # Year only: "2023"
+}
+
+# Named tuple to hold datetime and its format
+DateTimeAndFormat = namedtuple("DateTimeAndFormat", ["datetime", "format_str"])
 
 
-@dataclass
-class RenameResult:
-    """Result of a rename operation."""
+class MediaSorter:
+    def __init__(self, input_folder_path: Path, dry_mode: bool = False):
+        self.input_folder_path = input_folder_path
+        self.dry_mode = dry_mode
+        self.n_files = 0
+        self.n_folders = 0
+        self.n_files_processed = 0
+        self.n_folders_processed = 0
+        self.n_total_items = 0
 
-    old_path: str
-    new_path: str
+        for _, dirnames, filenames in os.walk(input_folder_path, topdown=True):
+            self.n_folders += len(dirnames)
+            self.n_files += sum(
+                1 for f in filenames if Path(f).suffix.lower() in MEDIA_EXTENSIONS
+            )
 
+        self.n_total_items = self.n_files + self.n_folders
 
-@dataclass
-class ErrorInfo:
-    """Information about an error during processing."""
+    def recursive_renaming(
+        self,
+        folder_path: Path,
+    ):
+        # Rename folder
+        new_folder_path = self.rename_folder(folder_path)
 
-    path: str
-    error_type: str
-    error_message: str
+        # List folder items
+        items = os.listdir(new_folder_path)
+        folders = [item for item in items if (new_folder_path / item).is_dir()]
+        files = [item for item in items if (new_folder_path / item).is_file()]
 
+        # Recursive operation in child folders
+        for folder in folders:
+            self.recursive_renaming(new_folder_path / folder)
 
-@dataclass
-class RenameStats:
-    """Statistics for rename operations."""
+        # Rename files in folder
+        for file in files:
+            self.rename_file(new_folder_path / file)
 
-    folders: List[RenameResult]
-    files: List[RenameResult]
-    errors: List[ErrorInfo]
+    def rename_folder(self, folder_path: Path) -> Path:
+        """Rename folder based on date and title extracted from its name."""
+        # Parse folder name
+        folder_name = folder_path.name
+        date_str, title = self.parse_folder_name(folder_name)
+        formatted_title = self.format_folder_title(title) if title else ""
 
-    def to_dict(self) -> Dict[str, List[Tuple[str, str]]]:
-        """Convert to dictionary format for backward compatibility."""
-        return {
-            "folders": [(r.old_path, r.new_path) for r in self.folders],
-            "files": [(r.old_path, r.new_path) for r in self.files],
-        }
+        # Build new folder name
+        new_folder_name_array = []
+        if date_str:
+            new_folder_name_array.append(date_str)
+        if formatted_title:
+            new_folder_name_array.append(formatted_title)
+        new_folder_name = "_".join(new_folder_name_array)
 
+        self.show_progress()
 
-def _has_date_separator(folder_name: str) -> bool:
-    """Check if folder name has date separators (dash or space after year)."""
-    has_dash = "-" in folder_name[:MAX_DATE_LENGTH]
-    has_space = " " in folder_name
-    return has_dash or has_space
+        # Rename folder if needed
+        if new_folder_name:
+            new_folder_path = folder_path.parent / new_folder_name
+            if new_folder_path != folder_path:
+                if self.dry_mode:
+                    pass
+                    print(f" - Would rename folder: {folder_name} -> {new_folder_name}")
+                else:
+                    print(f" - Renaming folder: {folder_name} -> {new_folder_name}")
+                    folder_path.rename(new_folder_path)
+                return new_folder_path if not self.dry_mode else folder_path
+        self.n_folders_processed += 1
 
+        return folder_path
 
-def parse_folder_name(folder_name: str) -> Tuple[Optional[str], str]:
-    """
-    Parse folder name to extract optional date and title.
+    def rename_file(self, file_path: Path) -> Path:
+        """
+        Rename a media file based on its metadata or parent directory name.
 
-    Date format: YYYY-MM-DD (month and day are optional) or YYYY-YYYY (year range)
-    Examples:
-        - "2023-01-15 My Photos" -> date: "20230115", title: "My Photos"
-        - "2023-01 Vacation" -> date: "202301", title: "Vacation"
-        - "2023 Summer" -> date: "2023", title: "Summer"
-        - "2020-2022 Childhood" -> date: "2020-2022", title: "Childhood"
-        - "My Photos" -> date: None, title: "My Photos"
-        - "20230115_my-photos" -> date: "20230115", title: "my-photos"
-          (already formatted)
+        Args:
+            file_path: Path to the media file
+        Returns:
+            tuple: (old_path, new_path) if renamed, None if not renamed
+        """
+        parent_dir_name = file_path.parent.name
+        extension = file_path.suffix.lower()
 
-    Args:
-        folder_name: The original folder name
+        if extension not in MEDIA_EXTENSIONS:
+            return None
 
-    Returns:
-        tuple: (date_str, title) where date_str is formatted without dashes
-               and title is the remaining part
-    """
-    # First check if it's already in formatted form:
-    # YYYYMMDD_title or YYYYMM_title or YYYY_title or YYYY-YYYY_title
-    formatted_pattern = r"^(\d{4}(?:-\d{4})?|\d{6}|\d{8})_(.+)$"
-    match = re.match(formatted_pattern, folder_name)
-    if match:
-        date_str, title = match.groups()
-        return date_str, title
+        # Try to extract datetime from metadata
+        dt_info_exif = self.extract_datetimeinfo_from_exif(file_path)
+        dt_info_filename = self.extract_datetimeinfo_from_filename(file_path.name)
+        dt_info = (
+            dt_info_exif
+            or dt_info_filename
+            or self.extract_datetimeinfo_from_folder_name(parent_dir_name)
+        )
 
-    # Check for year range: YYYY-YYYY followed by space and title
-    year_range_pattern = r"^(\d{4})-(\d{4})(?:\s+(.*))?$"
-    match = re.match(year_range_pattern, folder_name)
-    if match:
-        year1, year2, title = match.groups()
-        date_str = f"{year1}-{year2}"
-        title = title if title else ""
-        return date_str, title
+        should_write_exif = (
+            dt_info_exif is None
+            and dt_info_filename is not None
+            and extension in MEDIA_EXTENSIONS
+        )
 
-    # Pattern to match optional date at the start
-    # YYYY-MM-DD or YYYY-MM or YYYY followed by space and title
-    # This pattern requires either a dash or a space after the year
-    pattern = r"^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?(?:\s+(.*))?$"
-    match = re.match(pattern, folder_name)
+        base_name = self.create_base_filename(dt_info, parent_dir_name)
+        new_filename = self.generate_unique_filename(
+            file_path.parent, base_name, extension
+        )
 
-    if not match:
-        return None, folder_name
+        self.show_progress()
 
-    year, month, day, title = match.groups()
+        # Rename file if needed
+        if file_path.name != new_filename:
+            if self.dry_mode:
+                print(f" - Would rename file: {file_path.name} -> {new_filename}")
+            else:
+                print(f" - Renaming file: {file_path.name} -> {new_filename}")
+                file_path.rename(file_path.parent / new_filename)
+                # Optionally write EXIF DateTimeOriginal if missing
+                if should_write_exif:
+                    self.write_exif(file_path.parent / new_filename, dt_info)
 
-    # Only treat as a date if there's a dash or space after the year
-    # This means "2023-01-15", "2023-01", "2023 Summer" are dates
-    # but "20230115_my-photos" is not (handled above)
-    if not _has_date_separator(folder_name):
-        return None, folder_name
+        self.n_files_processed += 1
 
-    # Build date string from available components
-    date_str = year
-    if month:
-        date_str += month
-    if day:
-        date_str += day
+    def parse_folder_name(
+        self, folder_name: str
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Parse folder name to extract date and title.
 
-    # If no title provided after date, use empty string
-    title = title if title else ""
-    return date_str, title
+        Date format: YYYY-MM-DD (month and day are optional) or YYYY-YYYY (year range)
+        Examples:
+            - "2023-01-15 My Photos" -> date: "20230115", title: "My Photos"
+            - "2023-01 Vacation" -> date: "202301", title: "Vacation"
+            - "2023 Summer" -> date: "2023", title: "Summer"
+            - "2020-2022 Childhood" -> date: "2020-2022", title: "Childhood"
+            - "2023" -> date: "2023", title: ""
+            - "My Photos" -> date: "", title: "My Photos"
+            - "20230115_my-photos" -> date: "20230115", title: "my-photos"
+            (already formatted)
 
+        Args:
+            folder_name: The original folder name
 
-def _sanitize_string(text: str) -> str:
-    """
-    Remove special characters, keeping alphanumeric (including Unicode), spaces.
+        Returns:
+            tuple: (date_str, title) where date_str is formatted without dashes
+                and title is the remaining part
+        """
+        # First check if it's already in formatted form:
+        # YYYYMMDD_title or YYYYMM_title or YYYY_title or YYYY-YYYY_title
+        pattern = r"^(\d{4}(?:-\d{4}|\d{4}|\d{2})?)(?:_(.+))?$"
+        match = re.match(pattern, folder_name)
+        if match:
+            date_str, title = match.groups()
+            return date_str, title
 
-    Args:
-        text: Text to sanitize
+        # Check for year range: YYYY-YYYY optionally followed by space and title
+        pattern = r"(\d{4}-\d{4})(?:\s+(.*))?"
+        match = re.match(pattern, folder_name)
+        if match:
+            date_str, title = match.groups()
+            return date_str, title
 
-    Returns:
-        Sanitized text with special characters removed
-    """
-    # Remove all special characters except spaces and Unicode letters/numbers
-    # This preserves accented characters (é, à, ñ, ü, etc.)
-    # \w matches Unicode word characters (letters, digits, underscore)
-    # We replace underscores and keep spaces, letters, digits
-    sanitized = re.sub(r"[^\w\s]", "", text, flags=re.UNICODE)
-    # Remove underscores (which \w includes but we don't want)
-    sanitized = re.sub(r"_", "", sanitized)
+        # Pattern to match optional date at the start
+        # YYYY-MM-DD or YYYY-MM or YYYY optionally followed by space and title
+        pattern = r"^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?(?:\s(.+))?"
+        match = re.match(pattern, folder_name)
+        if not match:
+            return "", folder_name
+
+        # Build date string from available components
+        year, month, day, title = match.groups()
+        date_str = year + (month or "") + (day or "")
+
+        # If no title provided after date, return "" for title
+        return date_str, title or ""
+
+    def format_folder_title(self, title: str) -> str:
+        """
+        Remove special characters, keeping alphanumeric (including Unicode), spaces.
+        Preserve accented characters (é, à, ñ, ü, etc.)
+        Replace spaces with hyphens and converting to lowercase.
+
+        Args:
+            text: Text to sanitize
+
+        Returns:
+            Sanitized text with special characters removed
+        """
+        # Replace spaces and underscores with hyphens
+        sanitized = re.sub(r"[\s]", "-", title)
+        # We erase all non-word characters except hyphens and underscores
+        sanitized = re.sub(r"[^\w\_\-]", "", sanitized, flags=re.UNICODE)
+        # Clean up multi hyphens
+        sanitized = re.sub(r"-+", "-", sanitized)
+        return sanitized.lower()
+
     # Clean up multiple spaces and trim
-    sanitized = re.sub(r"\s+", " ", sanitized).strip()
-    return sanitized
-
-
-def _format_title(title: str) -> str:
-    """Format title to lowercase with dashes instead of spaces."""
-    # If title has spaces, sanitize and format it
-    if " " in title:
-        sanitized_title = _sanitize_string(title)
-        return sanitized_title.lower().replace(" ", "-")
-    # If title is already in dash-separated format, check if it needs sanitization
-    # by seeing if it has any special characters
-    elif re.search(r"[^a-zA-Z0-9-]", title):
-        # Has special characters, sanitize it
-        sanitized_title = _sanitize_string(title)
-        return sanitized_title.lower().replace(" ", "-")
-    else:
-        # Already formatted correctly (lowercase with dashes, no special chars)
-        return title.lower()
-
-
-def format_folder_name(date_str: Optional[str], title: str) -> str:
-    """
-    Format folder name according to the specification.
-
-    Format: {YYYYMMDD}_{title} where title is lowercased with dashes
-
-    Args:
-        date_str: Date string without dashes (e.g., "20230115", "202301", "2023")
-        title: Title text
-
-    Returns:
-        str: Formatted folder name
-    """
-    formatted_title = _format_title(title)
-
-    if date_str:
-        return f"{date_str}_{formatted_title}" if formatted_title else date_str
-
-    return formatted_title
-
-
-def should_rename(original_name: str, new_name: str) -> bool:
-    """
-    Check if a folder should be renamed.
-
-    Args:
-        original_name: Original folder name
-        new_name: Proposed new folder name
-
-    Returns:
-        bool: True if renaming is needed
-    """
-    return original_name != new_name
-
-
-def _extract_title_from_formatted(folder_name: str) -> Optional[str]:
-    """
-    Extract title from already formatted folder name.
-
-    Handles YYYYMMDD_title, YYYYMMDD-title, YYYY-YYYY_title, or YYYY-YYYY-title formats.
-    Does NOT match unformatted dates like "2023-05-15 Title" (those have spaces).
-    """
-    # Check for unformatted date patterns first - these should NOT be matched
-    # Unformatted: "2023-05-15 Title" or "2023-05 Title" or "2020-2022 Title" (with spaces)
-    if re.match(r"^\d{4}-\d{2}-\d{2}\s", folder_name):
-        return None  # Unformatted date like "2023-05-15 Title"
-    if re.match(r"^\d{4}-\d{2}\s", folder_name):
-        return None  # Unformatted date like "2023-05 Title"
-    if re.match(r"^\d{4}-\d{4}\s", folder_name):
-        return None  # Unformatted year range like "2020-2022 Title"
-
-    # Match formatted patterns:
-    # - YYYYMMDD-title or YYYYMMDD_title (e.g., "20230515-vacation")
-    # - YYYYMM-title or YYYYMM_title (e.g., "202305-photos")
-    # - YYYY-title or YYYY_title (e.g., "2023_summer")
-    # - YYYY-YYYY-title or YYYY-YYYY_title (e.g., "2020-2022_childhood")
-    formatted_pattern = r"^(\d{4}(?:-\d{4})?|\d{6}|\d{8})[_-](.+)$"
-    match = re.match(formatted_pattern, folder_name)
-
-    return match.group(2) if match else None
-
-
-def extract_title_from_folder_name(folder_name: str) -> str:
-    """
-    Extract just the title portion from a folder name, removing any date prefix.
-
-    Handles both formatted (YYYYMMDD_title) and unformatted (YYYY-MM-DD Title) names.
-
-    Args:
-        folder_name: The folder name to extract title from
-
-    Returns:
-        str: The title portion of the folder name
-    """
-    # Check if it's already in formatted form:
-    # YYYYMMDD_title or YYYYMM_title or YYYY_title
-    title = _extract_title_from_formatted(folder_name)
-    if title:
-        return title
-
-    # Otherwise, try to parse as unformatted date
-    date_str, title = parse_folder_name(folder_name)
-
-    if date_str and title:
-        return title
-    elif not date_str and title:
-        return title
-
-    # Edge case: date but no title (shouldn't happen in practice)
-    return folder_name
-
-
-def _extract_exif_datetime(image: Image.Image) -> Optional[Tuple[datetime, str]]:
-    """
-    Extract datetime from image EXIF data.
-
-    Returns:
-        Tuple of (datetime object, format string used) or None if invalid datetime.
-        The format string indicates the precision of the original EXIF data.
-    """
-    exif_data = image.getexif()
-
-    if not exif_data:
-        return None
-
-    # All supported datetime formats, from most specific to least specific
-    datetime_formats = [
-        "%Y:%m:%d %H:%M:%S",  # Standard EXIF: "2023:05:15 14:30:45"
-        "%Y:%m:%d %H:%M",  # Date with hour and minute: "2023:05:15 14:30"
-        "%Y:%m:%d %H",  # Date with hour: "2023:05:15 14"
-        "%Y:%m:%d",  # Date only: "2023:05:15"
-        "%Y:%m",  # Year and month: "2023:05"
-        "%Y",  # Year only: "2023"
-    ]
-
-    for preferred_tag in DATETIME_EXIF_TAGS:
-        for tag_id, value in exif_data.items():
-            tag = ExifTags.TAGS.get(tag_id, tag_id)
-            if tag == preferred_tag:
-                for fmt in datetime_formats:
-                    try:
-                        dt = datetime.strptime(value, fmt)
-                        return (dt, fmt)
-                    except (ValueError, TypeError):
-                        continue
-
-    return None
-
-
-def _format_datetime_from_exif(dt: datetime, fmt: str) -> str:
-    """
-    Format datetime based on the precision of the original EXIF data.
-
-    Args:
-        dt: datetime object
-        fmt: The format string that was used to parse the EXIF data
-
-    Returns:
-        Formatted datetime string with appropriate precision
-    """
-    # Map format strings to output formats (only include what was present)
-    format_map = {
-        "%Y:%m:%d %H:%M:%S": "%Y%m%d%H%M%S",  # Full: 20230515143045
-        "%Y:%m:%d %H:%M": "%Y%m%d%H%M",  # No seconds: 202305151430
-        "%Y:%m:%d %H": "%Y%m%d%H",  # Hour only: 2023051514
-        "%Y:%m:%d": "%Y%m%d",  # Date only: 20230515
-        "%Y:%m": "%Y%m",  # Year+month: 202305
-        "%Y": "%Y",  # Year only: 2023
-    }
-
-    output_format = format_map.get(fmt, "%Y%m%d%H%M%S")  # Default to full format
-    return dt.strftime(output_format)
-
-
-def _extract_datetime_from_filename(filename: str) -> Optional[datetime]:
-    """
-    Extract datetime from Signal or WhatsApp filename patterns.
-
-    Supported patterns:
-    - Signal: signal-YYYY-MM-DD-HH-MM-SS-randomtext.ext
-    - WhatsApp: IMG-YYYYMMDD-WAxxx.ext or VID-YYYYMMDD-WAxxx.ext
-
-    Args:
-        filename: The filename to parse
-
-    Returns:
-        datetime object if pattern matches, None otherwise
-    """
-    # Signal pattern: signal-2023-05-15-14-30-45-randomtext.ext
-    signal_pattern = r"signal-(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})"
-    match = re.match(signal_pattern, filename, re.IGNORECASE)
-    if match:
-        try:
-            year, month, day, hour, minute, second = map(int, match.groups())
-            return datetime(year, month, day, hour, minute, second)
-        except (ValueError, TypeError):
-            pass
-
-    # WhatsApp pattern: IMG-20230515-WA001.ext or VID-20230515-WA001.ext
-    whatsapp_pattern = r"(?:IMG|VID)-(\d{4})(\d{2})(\d{2})-WA"
-    match = re.match(whatsapp_pattern, filename, re.IGNORECASE)
-    if match:
-        try:
-            year, month, day = map(int, match.groups())
-            return datetime(year, month, day)
-        except (ValueError, TypeError):
-            pass
-
-    # Other pattern: IMG-20230515-143045.ext or VID-20230515-143045.ext
-    pattern = r"(?:IMG|VID)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})"
-    match = re.match(pattern, filename, re.IGNORECASE)
-    if match:
-        try:
-            year, month, day, hour, minute, second = map(int, match.groups())
-            return datetime(year, month, day, hour, minute, second)
-        except (ValueError, TypeError):
-            pass
-
-    return None
-
-
-def _write_exif_datetime(file_path: Path, dt: datetime) -> bool:
-    """
-    Write datetime to image EXIF metadata.
-
-    Args:
-        file_path: Path to the image file
-        dt: datetime object to write
-
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        with Image.open(file_path) as image:
-            exif_data = image.getexif()
-
-            # Format datetime for EXIF
-            dt_str = dt.strftime("%Y:%m:%d %H:%M:%S")
-
-            # Find the tag IDs for datetime fields
-            datetime_original_tag = None
-            datetime_digitized_tag = None
-            datetime_tag = None
-
-            for tag_id, tag_name in ExifTags.TAGS.items():
-                if tag_name == "DateTimeOriginal":
-                    datetime_original_tag = tag_id
-                elif tag_name == "DateTimeDigitized":
-                    datetime_digitized_tag = tag_id
-                elif tag_name == "DateTime":
-                    datetime_tag = tag_id
-
-            # Write to all datetime tags
-            if datetime_original_tag:
-                exif_data[datetime_original_tag] = dt_str
-            if datetime_digitized_tag:
-                exif_data[datetime_digitized_tag] = dt_str
-            if datetime_tag:
-                exif_data[datetime_tag] = dt_str
-
-            # Save the image with updated EXIF
-            image.save(file_path, exif=exif_data)
-            return True
-    except Exception:
-        return False
-
-
-def _extract_datetime_from_folder_name(folder_name: str) -> Optional[datetime]:
-    """
-    Extract datetime from folder name.
-
-    Supports various date formats:
-    - YYYYMMDD_title or YYYYMMDD-title -> datetime(YYYY, MM, DD)
-    - YYYYMM_title or YYYYMM-title -> datetime(YYYY, MM, 1)
-    - YYYY_title or YYYY-title -> datetime(YYYY, 1, 1)
-    - YYYY-MM-DD Title -> datetime(YYYY, MM, DD)
-    - YYYY-MM Title -> datetime(YYYY, MM, 1)
-    - YYYY Title -> datetime(YYYY, 1, 1)
-
-    Year ranges (YYYY-YYYY) are not supported and return None.
-
-    Args:
-        folder_name: The folder name to parse
-
-    Returns:
-        datetime object if date can be extracted, None otherwise
-    """
-    date_str, _ = parse_folder_name(folder_name)
-
-    if not date_str:
-        return None
-
-    # Skip year ranges (e.g., "2020-2022")
-    if "-" in date_str and len(date_str) == 9:  # Format: YYYY-YYYY
-        return None
-
-    # Remove any remaining hyphens from year ranges
-    date_str = date_str.replace("-", "")
-
-    # Parse based on length
-    try:
-        if len(date_str) == 8:  # YYYYMMDD
-            year = int(date_str[0:4])
-            month = int(date_str[4:6])
-            day = int(date_str[6:8])
-            return datetime(year, month, day)
-        elif len(date_str) == 6:  # YYYYMM
-            year = int(date_str[0:4])
-            month = int(date_str[4:6])
-            return datetime(year, month, 1)
-        elif len(date_str) == 4:  # YYYY
-            year = int(date_str)
-            return datetime(year, 1, 1)
-    except (ValueError, TypeError):
-        pass
-
-    return None
-
-
-def get_media_file_datetime(file_path: Path) -> Optional[Tuple[datetime, str]]:
-    """
-    Extract datetime from media file EXIF metadata.
-
-    Args:
-        file_path: Path to the media file
-
-    Returns:
-        Tuple of (datetime object, format string) if metadata exists, None otherwise
-    """
-    try:
-        with Image.open(file_path) as image:
-            return _extract_exif_datetime(image)
-    except Exception:
-        # If file can't be opened or doesn't have EXIF data (e.g., videos)
-        return None
-
-
-def generate_unique_filename(directory: Path, base_name: str, extension: str) -> str:
-    """
-    Generate a unique filename in the directory by adding a counter if needed.
-
-    Args:
-        directory: Path object for the directory
-        base_name: Base name for the file (without extension)
-        extension: File extension (including the dot)
-
-    Returns:
-        str: Unique filename
-
-    Raises:
-        ValueError: If too many files with the same base name exist
-    """
-    # Try the base name first
-    candidate = f"{base_name}{extension}"
-    if not (directory / candidate).exists():
-        return candidate
-
-    # File exists, start adding counters
-    for counter in range(1, MAX_FILENAME_COUNTER + 1):
-        candidate = f"{base_name}_{counter:03d}{extension}"
+    def create_base_filename(
+        self, dt_info: DateTimeAndFormat, parent_dir_name: str
+    ) -> str:
+        """
+        Create base filename from datetime and parent directory name.
+
+        Args:
+            dt_info: Tuple of (datetime, format_string) or None
+            parent_dir_name: Name of the parent directory
+
+        Returns:
+            Base filename without extension
+
+        Raises:
+            ValueError: If both datetime and title are empty
+        """
+        dt, fmt = dt_info if dt_info else (None, None)
+        folder_dt, folder_title = self.parse_folder_name(parent_dir_name)
+        formatted_title = self.format_folder_title(folder_title) if folder_title else ""
+
+        # If we have a datetime object from dt_info, use it
+        if dt:
+            if formatted_title:
+                return f"{dt.strftime(fmt)}_{formatted_title}"
+            else:
+                return dt.strftime(fmt)
+
+        # If we have a folder datetime string, try to extract datetime from it
+        if folder_dt:
+            folder_dt_info = self.extract_datetimeinfo_from_folder_name(parent_dir_name)
+            if folder_dt_info:
+                if formatted_title:
+                    return f"{folder_dt_info.datetime.strftime(folder_dt_info.format_str)}_{formatted_title}"
+                else:
+                    return folder_dt_info.datetime.strftime(folder_dt_info.format_str)
+
+        # Only title, no datetime
+        if formatted_title:
+            return formatted_title
+
+        # Neither datetime nor title - this should not happen in normal operation
+        raise ValueError("Cannot create filename: both datetime and title are empty")
+
+    def generate_unique_filename(
+        self, directory: Path, base_name: str, extension: str
+    ) -> str:
+        """
+        Generate a unique filename in the directory by adding a counter if needed.
+
+        Args:
+            directory: Path object for the directory
+            base_name: Base name for the file (without extension)
+            extension: File extension (including the dot)
+
+        Returns:
+            str: Unique filename
+
+        Raises:
+            ValueError: If too many files with the same base name exist
+        """
+        # Try the base name first
+        candidate = f"{base_name}{extension}"
         if not (directory / candidate).exists():
             return candidate
 
-    raise ValueError(f"Too many files with base name {base_name}")
+        # File exists, start adding counters
+        for counter in range(1, 1000):
+            candidate = f"{base_name}_{counter:03d}{extension}"
+            if not (directory / candidate).exists():
+                return candidate
 
+        raise ValueError(f"Too many files with base name {base_name}")
 
-def _create_base_filename(
-    dt_info: Optional[Tuple[datetime, str]], parent_dir_name: str
-) -> str:
-    """
-    Create base filename from datetime and parent directory name.
+    def extract_datetimeinfo_from_exif(
+        self, file_path: Path
+    ) -> Optional[DateTimeAndFormat]:
+        """
+        Extract datetime from media file EXIF metadata.
 
-    Args:
-        dt_info: Tuple of (datetime, format_string) or None
-        parent_dir_name: Name of the parent directory
+        Args:
+            file_path: Path to the media file
 
-    Returns:
-        Base filename without extension
-    """
-    if dt_info:
-        dt, fmt = dt_info
-        title = extract_title_from_folder_name(parent_dir_name)
-        # Format/sanitize the title
-        formatted_title = _format_title(title)
-        datetime_str = _format_datetime_from_exif(dt, fmt)
-        return f"{datetime_str}_{formatted_title}"
-    # For files without EXIF, use the parent dir name directly
-    # (it will already be formatted/sanitized if it's a processed folder)
-    return parent_dir_name
+        Returns:
+            Optional[MediaDateInfo]: datetime object if EXIF date found, None otherwise
+        """
 
-
-def rename_media_file(file_path: Path) -> Optional[Tuple[str, str]]:
-    """
-    Rename a media file based on its metadata or parent directory name.
-
-    Args:
-        file_path: Path to the media file
-    Returns:
-        tuple: (old_path, new_path) if renamed, None if not renamed
-    """
-    parent_dir_name = file_path.parent.name
-    extension = file_path.suffix.lower()
-
-    if extension not in MEDIA_EXTENSIONS:
+        try:
+            with Image.open(file_path) as image:
+                exif_data = image.getexif()
+                if not exif_data:
+                    return None
+                for preferred_tag in DATETIME_EXIF_TAGS:
+                    for tag_id, value in exif_data.items():
+                        tag = ExifTags.TAGS.get(tag_id)
+                        if tag == preferred_tag:
+                            for (
+                                format_str,
+                                output_format,
+                            ) in EXIF_DT_FORMAT_MAP.items():
+                                try:
+                                    dt = datetime.strptime(value, format_str)
+                                    return DateTimeAndFormat(dt, output_format)
+                                except (ValueError, TypeError):
+                                    continue
+        except Exception:
+            pass
         return None
 
-    # Try to extract datetime from metadata
-    dt_info = get_media_file_datetime(file_path)
-    had_no_metadata = dt_info is None
+    def extract_datetimeinfo_from_filename(
+        self, filename: str
+    ) -> Optional[DateTimeAndFormat]:
+        """
+        Extract datetime from Signal or WhatsApp filename patterns.
 
-    # If no EXIF metadata, try to extract from filename (Signal/WhatsApp)
-    if had_no_metadata:
-        dt_from_filename = _extract_datetime_from_filename(file_path.name)
-        if dt_from_filename:
-            # Use the extracted datetime with full precision format
-            dt_info = (dt_from_filename, "%Y:%m:%d %H:%M:%S")
-        else:
-            # If still no datetime, try to extract from parent folder name
-            dt_from_folder = _extract_datetime_from_folder_name(parent_dir_name)
-            if dt_from_folder:
-                # Determine format based on folder date precision
-                date_str, _ = parse_folder_name(parent_dir_name)
-                if date_str:
-                    date_str_clean = date_str.replace("-", "")
-                    if len(date_str_clean) == 8:  # Full date
-                        fmt = "%Y:%m:%d"
-                    elif len(date_str_clean) == 6:  # Year+month
-                        fmt = "%Y:%m"
-                    else:  # Year only
-                        fmt = "%Y"
-                    dt_info = (dt_from_folder, fmt)
+        Supported patterns:
+        - Signal: signal-YYYY-MM-DD-HH-MM-SS-randomtext.ext
+        - WhatsApp: IMG-YYYYMMDD-WAxxx.ext or VID-YYYYMMDD-WAxxx.ext
 
-    base_name = _create_base_filename(dt_info, parent_dir_name)
+        Args:
+            filename: The filename to parse
 
-    # Generate unique filename
-    new_filename = generate_unique_filename(file_path.parent, base_name, extension)
-    new_path = file_path.parent / new_filename
+        Returns:
+            Optional[MediaDateInfo]: datetime object if pattern matches, None otherwise
+        """
+        # Wanted pattern: 20230515143045-randomtext.ext
+        wanted_pattern = (
+            r"^(\d{4})(?:(\d{2}))?(?:(\d{2}))?(?:(\d{2}))?(?:(\d{2}))?(?:(\d{2}))?"
+        )
+        match = re.match(wanted_pattern, filename)
+        if match:
+            try:
+                year, month, day, hour, minute, second = match.groups()
+                if second is not None:
+                    format_str = "%Y%m%d%H%M%S"
+                elif minute is not None:
+                    format_str = "%Y%m%d%H%M"
+                elif hour is not None:
+                    format_str = "%Y%m%d%H"
+                elif day is not None:
+                    format_str = "%Y%m%d"
+                elif month is not None:
+                    format_str = "%Y%m"
+                else:
+                    format_str = "%Y"
+                return DateTimeAndFormat(
+                    datetime(
+                        int(year),
+                        int(month or 1),
+                        int(day or 1),
+                        int(hour or 0),
+                        int(minute or 0),
+                        int(second or 0),
+                    ),
+                    format_str,
+                )
+            except (ValueError, TypeError):
+                pass
 
-    # Check if renaming is needed
-    needs_rename = file_path.name != new_filename
+        # Signal pattern: signal-2023-05-15-14-30-45-randomtext.ext
+        signal_pattern = r"signal-(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})"
+        match = re.match(signal_pattern, filename, re.IGNORECASE)
+        if match:
+            try:
+                year, month, day, hour, minute, second = map(int, match.groups())
+                return DateTimeAndFormat(
+                    datetime(year, month, day, hour, minute, second),
+                    "%Y%m%d%H%M%S",
+                )
+            except (ValueError, TypeError):
+                pass
 
-    if needs_rename:
-        try:
-            file_path.rename(new_path)
-        except Exception as e:
-            print(f"Error renaming {file_path} to {new_path}: {e}")
+        # WhatsApp pattern: IMG-20230515-WA001.ext or VID-20230515-WA001.ext
+        whatsapp_pattern = r"(?:IMG|VID)-(\d{4})(\d{2})(\d{2})-WA"
+        match = re.match(whatsapp_pattern, filename, re.IGNORECASE)
+        if match:
+            try:
+                year, month, day = map(int, match.groups())
+                return DateTimeAndFormat(datetime(year, month, day), "%Y%m%d")
+            except (ValueError, TypeError):
+                pass
+
+        # Other pattern: IMG-20230515-143045.ext or VID-20230515-143045.ext
+        pattern = r"(?:IMG|VID)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})"
+        match = re.match(pattern, filename, re.IGNORECASE)
+        if match:
+            try:
+                year, month, day, hour, minute, second = map(int, match.groups())
+                return DateTimeAndFormat(
+                    datetime(year, month, day, hour, minute, second), "%Y%m%d%H%M%S"
+                )
+            except (ValueError, TypeError):
+                pass
+
+        return None
+
+    def extract_datetimeinfo_from_folder_name(
+        self,
+        folder_name: str,
+    ) -> Optional[DateTimeAndFormat]:
+        """
+        Extract datetime from folder name.
+
+        Supports various date formats:
+        - YYYYMMDD_title or YYYYMMDD-title -> datetime(YYYY, MM, DD)
+        - YYYYMM_title or YYYYMM-title -> datetime(YYYY, MM, 1)
+        - YYYY_title or YYYY-title -> datetime(YYYY, 1, 1)
+        - YYYY-MM-DD Title -> datetime(YYYY, MM, DD)
+        - YYYY-MM Title -> datetime(YYYY, MM, 1)
+        - YYYY Title -> datetime(YYYY, 1, 1)
+
+        Year ranges (YYYY-YYYY) are not supported and return None.
+
+        Args:
+            folder_name: The folder name to parse
+
+        Returns:
+            Optional[MediaDateInfo]: datetime object if date found, None otherwise
+        """
+        date_str, _ = self.parse_folder_name(folder_name)
+
+        if not date_str:
             return None
 
-    # If file had no metadata but we found a date from filename pattern (Signal/WhatsApp),
-    # write it to EXIF for images
-    dt_from_filename = _extract_datetime_from_filename(file_path.name)
-    should_write_exif = (
-        had_no_metadata
-        and dt_from_filename is not None
-        and extension in {".jpg", ".jpeg", ".png", ".tiff", ".bmp"}
-    )
+        # Skip year ranges (e.g., "2020-2022")
+        if "-" in date_str and len(date_str) == 9:  # Format: YYYY-YYYY
+            return None
 
-    # Write EXIF if required (whether renamed or not)
-    if should_write_exif:
-        _write_exif_datetime(new_path, dt_from_filename)
+        # Remove any remaining hyphens from year ranges
+        date_str = date_str.replace("-", "")
 
-    # Only return result if file was actually renamed
-    if needs_rename:
-        return (str(file_path), str(new_path))
-    else:
+        # Parse based on length
+        try:
+            if len(date_str) == 8:  # YYYYMMDD
+                year = int(date_str[0:4])
+                month = int(date_str[4:6])
+                day = int(date_str[6:8])
+                return DateTimeAndFormat(datetime(year, month, day), "%Y%m%d")
+            elif len(date_str) == 6:  # YYYYMM
+                year = int(date_str[0:4])
+                month = int(date_str[4:6])
+                return DateTimeAndFormat(datetime(year, month, 1), "%Y%m")
+            elif len(date_str) == 4:  # YYYY
+                year = int(date_str)
+                return DateTimeAndFormat(datetime(year, 1, 1), "%Y")
+        except (ValueError, TypeError):
+            pass
+
         return None
 
+    def write_exif(self, file_path: Path, dt_info: DateTimeAndFormat):
+        """
+        Write EXIF DateTimeOriginal tag to the image file.
 
-def _process_folders_in_directory(
-    dirpath: str, dirnames: List[str]
-) -> List[Tuple[Path, Path, str, str]]:
-    """Collect folders that need to be renamed in a directory."""
-    dirs_to_rename = []
-
-    for dirname in dirnames:
-        old_path = Path(dirpath) / dirname
-        date_str, title = parse_folder_name(dirname)
-        new_name = format_folder_name(date_str, title)
-
-        if should_rename(dirname, new_name):
-            new_path = Path(dirpath) / new_name
-            dirs_to_rename.append((old_path, new_path, dirname, new_name))
-
-    return dirs_to_rename
-
-
-def _rename_folders_batch(
-    dirs_to_rename: List[Tuple[Path, Path, str, str]], dirnames: List[str]
-) -> Tuple[List[RenameResult], List[ErrorInfo]]:
-    """Perform batch folder renaming and return results and errors."""
-    renamed = []
-    errors = []
-
-    for old_path, new_path, old_name, new_name in dirs_to_rename:
+        Args:
+            file_path: Path to the image file
+            dt_info: DateTimeAndFormat object containing datetime and format string
+        """
         try:
-            old_path.rename(new_path)
-            renamed.append(RenameResult(str(old_path), str(new_path)))
+            with Image.open(file_path) as image:
+                exif_data = image.getexif()
+                if exif_data is None:
+                    exif_data = {}
 
-            # Update dirnames list to reflect the rename
-            idx = dirnames.index(old_name)
-            dirnames[idx] = new_name
-        except Exception as e:
-            errors.append(ErrorInfo(str(old_path), "folder_rename", str(e)))
+                for datetime_tag_name in DATETIME_EXIF_TAGS:
+                    date_time_tag = None
+                    for tag_id, tag_name in ExifTags.TAGS.items():
+                        if tag_name == datetime_tag_name:
+                            date_time_tag = tag_id
+                            break
 
-    return renamed, errors
+                    if date_time_tag is not None:
+                        # Do not overwrite existing EXIF date
+                        if bool(exif_data[date_time_tag]):
+                            continue
 
+                        exif_format = next(
+                            (
+                                exif_format
+                                for exif_format, format_str in EXIF_DT_FORMAT_MAP.items()
+                                if format_str == dt_info.format_str
+                            ),
+                            "%Y:%m:%d %H:%M:%S",
+                        )
+                        dt_str = dt_info.datetime.strftime(exif_format)
+                        exif_data[date_time_tag] = dt_str
+                        image.save(file_path, exif=exif_data)
+        except Exception:
+            pass
 
-def _process_files_in_directory(
-    dirpath: str, filenames: List[str]
-) -> Tuple[List[RenameResult], List[ErrorInfo]]:
-    """Process and rename media files in a directory."""
-    renamed = []
-    errors = []
-
-    for filename in filenames:
-        file_path = Path(dirpath) / filename
-        try:
-            result = rename_media_file(file_path)
-            if result:
-                renamed.append(RenameResult(*result))
-        except Exception as e:
-            errors.append(ErrorInfo(str(file_path), "file_rename", str(e)))
-
-    return renamed, errors
-
-
-def rename_folders(root_path: str) -> Dict[str, List[Tuple[str, str]]]:
-    """
-    Recursively rename folders and media files in the directory tree from top to bottom.
-
-    Args:
-        root_path: Root directory path to start processing
-
-    Returns:
-        dict: Dictionary with 'folders' and 'files' keys containing lists of renamed
-        items
-
-    Raises:
-        ValueError: If path doesn't exist or is not a directory
-    """
-    root_path = Path(root_path).resolve()
-
-    if not root_path.exists():
-        raise ValueError(f"Path does not exist: {root_path}")
-
-    if not root_path.is_dir():
-        raise ValueError(f"Path is not a directory: {root_path}")
-
-    stats = RenameStats(folders=[], files=[], errors=[])
-
-    # Count total items first
-    total_folders = 0
-    total_files = 0
-    for _, dirnames, filenames in os.walk(root_path, topdown=True):
-        total_folders += len(dirnames)
-        total_files += sum(
-            1 for f in filenames if Path(f).suffix.lower() in MEDIA_EXTENSIONS
-        )
-
-    total_items = total_folders + total_files
-    processed = 0
-    renamed_count = 0
-
-    # Walk the directory tree from bottom to top
-    for dirpath, dirnames, filenames in os.walk(root_path, topdown=False):
-        # Sort for consistent behavior
-        dirnames.sort()
-        filenames.sort()
-
-        # Process files first
-        renamed_files, file_errors = _process_files_in_directory(dirpath, filenames)
-        stats.files.extend(renamed_files)
-        stats.errors.extend(file_errors)
-        renamed_count += len(renamed_files)
-        processed += sum(
-            1 for f in filenames if Path(f).suffix.lower() in MEDIA_EXTENSIONS
-        )
-
-        # Show progress
-        if total_items > 0:
-            percentage = (processed / total_items) * 100
+    def show_progress(self):
+        """Display progress of processing."""
+        if self.n_total_items > 0:
+            percentage = (
+                (self.n_files_processed + self.n_folders_processed)
+                / self.n_total_items
+                * 100
+            )
             print(
-                f"\rProcessing: {processed}/{total_items} ({percentage:.1f}%)",
-                end="",
+                f"\nProcessing: {self.n_files_processed + self.n_folders_processed}/{self.n_total_items} ({percentage:.1f}%)",
+                end="\033[F",
+                # end="\r",
                 flush=True,
             )
-
-        # Process folders
-        dirs_to_rename = _process_folders_in_directory(dirpath, dirnames)
-        renamed_folders, folder_errors = _rename_folders_batch(dirs_to_rename, dirnames)
-        stats.folders.extend(renamed_folders)
-        stats.errors.extend(folder_errors)
-        renamed_count += len(renamed_folders)
-        processed += len(dirnames)
-
-        # Show progress
-        if total_items > 0:
-            percentage = (processed / total_items) * 100
-            print(
-                f"\rProcessing: {processed}/{total_items} ({percentage:.1f}%)",
-                end="",
-                flush=True,
-            )
-
-    # Final newline
-    print()
-    return stats
-
-
-def _dry_run_folders(root_path: Path) -> Tuple[int, int]:
-    """
-    Perform dry run to count what would be renamed.
-
-    Args:
-        root_path: Root directory path to check
-
-    Returns:
-        tuple: (folder_count, file_count)
-    """
-    folder_count = 0
-    file_count = 0
-
-    # Count total items first
-    total_folders = 0
-    total_files = 0
-    for _, dirnames, filenames in os.walk(root_path, topdown=True):
-        total_folders += len(dirnames)
-        total_files += sum(
-            1 for f in filenames if Path(f).suffix.lower() in MEDIA_EXTENSIONS
-        )
-
-    total_items = total_folders + total_files
-    processed = 0
-    would_rename = 0
-
-    for dirpath, dirnames, filenames in os.walk(root_path, topdown=False):
-        dirnames.sort()
-        filenames.sort()
-
-        # Check files
-        current_dir_name = Path(dirpath).name
-        for filename in filenames:
-            file_path = Path(dirpath) / filename
-            extension = file_path.suffix.lower()
-
-            if extension in MEDIA_EXTENSIONS:
-                dt_info = get_media_file_datetime(file_path)
-                base_name = _create_base_filename(dt_info, current_dir_name)
-                new_filename = generate_unique_filename(
-                    file_path.parent, base_name, extension
-                )
-
-                if filename != new_filename:
-                    file_count += 1
-                    would_rename += 1
-                processed += 1
-
-                # Show progress
-                if total_items > 0:
-                    percentage = (processed / total_items) * 100
-                    print(
-                        f"\rChecking: {processed}/{total_items} ({percentage:.1f}%)",
-                        end="",
-                        flush=True,
-                    )
-
-        # Check folders
-        for dirname in dirnames:
-            date_str, title = parse_folder_name(dirname)
-            new_name = format_folder_name(date_str, title)
-            if should_rename(dirname, new_name):
-                folder_count += 1
-                would_rename += 1
-            processed += 1
-
-            # Show progress
-            if total_items > 0:
-                percentage = (processed / total_items) * 100
-                print(
-                    f"\rChecking: {processed}/{total_items} ({percentage:.1f}%)",
-                    end="",
-                    flush=True,
-                )
-
-    # Final newline
-    print()
-    return folder_count, file_count
-
-
-def _write_error_log(errors: List[ErrorInfo], log_path: Path) -> None:
-    """
-    Write errors to a log file.
-
-    Args:
-        errors: List of ErrorInfo objects
-        log_path: Path to the error log file
-    """
-    if not errors:
-        # Remove log file if it exists and there are no errors
-        if log_path.exists():
-            log_path.unlink()
-        return
-
-    try:
-        with open(log_path, "w", encoding="utf-8") as f:
-            f.write("Media Sorter - Error Log\n")
-            f.write("=" * 80 + "\n\n")
-            for error in errors:
-                f.write(f"Type: {error.error_type}\n")
-                f.write(f"Path: {error.path}\n")
-                f.write(f"Error: {error.error_message}\n")
-                f.write("-" * 80 + "\n")
-    except Exception as e:
-        print(f"Warning: Could not write error log: {e}")
-
-
-def _display_error_summary(errors: List[ErrorInfo]) -> None:
-    """
-    Display error summary to console.
-
-    Args:
-        errors: List of ErrorInfo objects
-    """
-    if not errors:
-        return
-
-    print("\n" + "=" * 80)
-    print(f"ERRORS ENCOUNTERED: {len(errors)}")
-    print("=" * 80)
-
-    for i, error in enumerate(errors, 1):
-        print(f"\n{i}. {error.error_type.replace('_', ' ').title()}")
-        print(f"   Path: {error.path}")
-        print(f"   Error: {error.error_message}")
-
-    print("\n" + "=" * 80)
-    print("Error details have been saved to: error.log")
-    print("=" * 80)
 
 
 def main() -> int:
@@ -928,29 +560,8 @@ def main() -> int:
             print(f"Error: Path does not exist: {root_path}")
             return 1
 
-        if args.dry_run:
-            print("Dry run - no actual changes will be made:")
-            # TODO: FIX COUNT
-            folder_count, file_count = _dry_run_folders(root_path)
-            print(f"\nTotal folders that would be renamed: {folder_count}")
-            print(f"Total files that would be renamed: {file_count}")
-        else:
-            stats = rename_folders(str(root_path))
-            # TODO: FIX COUNT
-            print(f"\nTotal folders renamed: {len(stats.folders)}")
-            print(f"Total files renamed: {len(stats.files)}")
-
-            # Handle errors
-            if stats.errors:
-                error_log_path = Path.cwd() / "error.log"
-                _write_error_log(stats.errors, error_log_path)
-                _display_error_summary(stats.errors)
-                return 1  # Exit with error code if there were errors
-            else:
-                # Clean up error log if it exists and there are no errors
-                error_log_path = Path.cwd() / "error.log"
-                if error_log_path.exists():
-                    error_log_path.unlink()
+        sorter = MediaSorter(root_path, dry_mode=args.dry_run)
+        sorter.recursive_renaming(root_path)
 
         return 0
     except Exception as e:

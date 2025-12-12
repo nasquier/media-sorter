@@ -86,19 +86,18 @@ The title component comes from the parent folder name:
 
 ### Processing Behavior
 
-**Bottom-to-Top Processing:**
-The script processes directories from the deepest level upward (bottom-to-top) to ensure:
-- Files are renamed before their parent folder
-- Folder renames don't invalidate file paths
-- Progress messages show final folder names, not intermediate states
+**Top-to-Bottom Processing:**
+The script processes directories recursively:
+- Renames the current folder first
+- Then processes all subfolders recursively
+- Finally renames files in the current folder
+- This ensures parent folder names are finalized before files are renamed
 
 **Progress Display:**
-Real-time progress with percentage, showing:
-- Total items processed
-- Number of items renamed
-- Number of items left untouched
-
-Example: `3465/3465 (100.0%) processed, 904 renamed, 2561 untouched`
+Real-time progress with percentage:
+- Shows items processed vs total items
+- Updates continuously as processing occurs
+- Example: `Processing: 1234/3465 (35.6%)`
 
 **Dry-Run Mode:**
 Preview all changes without modifying anything:
@@ -112,12 +111,12 @@ The dry-run accurately simulates:
 - Duplicate counter assignment
 - Total count of changes
 
-### Additional Features
+**Additional Features**
 - **Recursive processing** - Handles nested folder structures of any depth
-- **Error resilience** - Continues processing even if individual files fail
-- **Comprehensive error logging** - Failed operations logged to `error.log`
+- **Class-based architecture** - Clean OOP design with MediaSorter class
+- **Progress tracking** - Real-time percentage-based progress display
 - **Exit codes** - Returns 1 if errors occurred, 0 on success
-- **Test coverage** - 83 comprehensive tests covering all scenarios
+- **Test coverage** - Comprehensive test suites for both implementations
 - **CI/CD** - Automated testing via GitHub Actions
 
 ## Installation
@@ -139,10 +138,10 @@ pip install -r requirements.txt
 
 ```bash
 # Rename folders and files in a directory
-python media_sorter.py /path/to/folder
+python3 media_sorter.py /path/to/folder
 
 # Preview changes without modifying files (dry-run)
-python media_sorter.py --dry-run /path/to/folder
+python3 media_sorter.py --dry-run /path/to/folder
 ```
 
 ### Examples
@@ -173,44 +172,31 @@ python media_sorter.py --dry-run /path/to/folder
 
 ## Error Handling
 
-When errors occur during processing (e.g., permission denied, file in use), the script:
+The script handles errors gracefully:
 
-1. **Continues processing** - Errors don't stop the entire operation
-2. **Logs to `error.log`** - All failed operations are written to this file in the current directory
-3. **Displays a summary** - At the end, shows all errors encountered
-4. **Returns exit code 1** - If any errors occurred (useful for CI/CD)
+1. **EXIF errors are silently caught** - If EXIF reading/writing fails, the script continues without EXIF data
+2. **File operations are straightforward** - If a file operation fails, Python will raise an exception
+3. **Returns exit code 1** - If an unhandled exception occurs during processing
+4. **Returns exit code 0** - On successful completion
 
-**Example error.log:**
-```
-Error processing files/folders - 2 errors encountered:
-
-1. Path: /photos/locked/IMG_1234.jpg
-   Type: PermissionError
-   Message: [Errno 13] Permission denied: '/photos/locked/IMG_1234.jpg'
-
-2. Path: /photos/corrupt/photo.jpg
-   Type: PIL.UnidentifiedImageError
-   Message: cannot identify image file
-```
-
-The `error.log` file is automatically:
-- Created only when errors occur
-- Removed if no errors are found
-- Ignored by git (listed in `.gitignore`)
+For robust production use, consider wrapping file operations in try-catch blocks and implementing detailed error logging based on your needs.
 
 ## Development
 
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all tests for the main implementation
 pytest test_media_sorter.py -v
 
+# Run all tests for the class-based implementation
+pytest test_media_sorter_class.py -v
+
 # Run specific test class
-pytest test_media_sorter.py::TestSpecialCharacterSanitization -v
+pytest test_media_sorter_class.py::TestSpecialCharacterSanitization -v
 
 # Run with coverage
-pytest test_media_sorter.py --cov=media_sorter
+pytest --cov=media_sorter
 ```
 
 ### Code Quality
@@ -243,7 +229,7 @@ GitHub Actions workflow runs automatically on push/PR:
 
 ## Test Coverage
 
-The project includes 83 comprehensive tests covering:
+The project includes comprehensive test suites for the class-based implementation covering:
 
 **Folder Operations:**
 - All date format parsing (full date, year-month, year only, year ranges)
@@ -277,7 +263,7 @@ The project includes 83 comprehensive tests covering:
 - Recursive processing
 - Dry-run accuracy
 
-**Total: 83 tests, 100% passing**
+**Both test suites ensure complete coverage of all functionality**
 
 ## Supported Date Formats
 
@@ -309,5 +295,4 @@ MIT License - See LICENSE file for details
 ## Acknowledgments
 
 - Developed with AI assistance (GitHub Copilot / Claude)
-- EXIF handling powered by Pillow
 - Testing with pytest
