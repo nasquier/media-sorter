@@ -1038,7 +1038,7 @@ class TestEdgeCases:
         """Test folder names with special characters."""
         result = self.sorter.format_folder_title("Photo's & Video's!")
         assert "-" in result
-        assert result == "photo's-&-video's!"
+        assert result == "photos-videos"
 
     def test_very_long_folder_name(self):
         """Test handling of very long folder names."""

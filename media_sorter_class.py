@@ -226,9 +226,9 @@ class MediaSorter:
             Sanitized text with special characters removed
         """
         # Replace spaces and underscores with hyphens
-        sanitized = re.sub(r"[\s_]", "-", title)
-        # We erase all non-word characters except hyphens
-        sanitized = re.sub(r"[^\w-]", "", sanitized, flags=re.UNICODE)
+        sanitized = re.sub(r"[\s]", "-", title)
+        # We erase all non-word characters except hyphens and underscores
+        sanitized = re.sub(r"[^\w\_\-]", "", sanitized, flags=re.UNICODE)
         # Clean up multi hyphens
         sanitized = re.sub(r"-+", "-", sanitized)
         return sanitized.lower()
