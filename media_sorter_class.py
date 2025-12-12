@@ -322,6 +322,40 @@ class MediaSorter:
         Returns:
             Optional[MediaDateInfo]: datetime object if pattern matches, None otherwise
         """
+        # Wanted pattern: 20230515143045-randomtext.ext
+        wanted_pattern = (
+            r"^(\d{4})(?:(\d{2}))?(?:(\d{2}))?(?:(\d{2}))?(?:(\d{2}))?(?:(\d{2}))?"
+        )
+        match = re.match(wanted_pattern, filename)
+        if match:
+            try:
+                year, month, day, hour, minute, second = match.groups()
+                if second is not None:
+                    format_str = "%Y%m%d%H%M%S"
+                elif minute is not None:
+                    format_str = "%Y%m%d%H%M"
+                elif hour is not None:
+                    format_str = "%Y%m%d%H"
+                elif day is not None:
+                    format_str = "%Y%m%d"
+                elif month is not None:
+                    format_str = "%Y%m"
+                else:
+                    format_str = "%Y"
+                return DateTimeAndFormat(
+                    datetime(
+                        int(year),
+                        int(month or 1),
+                        int(day or 1),
+                        int(hour or 0),
+                        int(minute or 0),
+                        int(second or 0),
+                    ),
+                    format_str,
+                )
+            except (ValueError, TypeError):
+                pass
+
         # Signal pattern: signal-2023-05-15-14-30-45-randomtext.ext
         signal_pattern = r"signal-(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})"
         match = re.match(signal_pattern, filename, re.IGNORECASE)
