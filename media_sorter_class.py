@@ -27,6 +27,17 @@ MEDIA_EXTENSIONS = {
 DATETIME_EXIF_TAGS = ["DateTimeOriginal", "DateTimeDigitized", "DateTime"]
 
 
+# All supported datetime formats, from most specific to least specific
+# Map format strings to output formats
+EXIF_DT_FORMAT_MAP = {
+    "%Y:%m:%d %H:%M:%S": "%Y%m%d%H%M%S",  # Standard EXIF: "2023:05:15 14:30:45"
+    "%Y:%m:%d %H:%M": "%Y%m%d%H%M",  # Date with hour and minute: "2023:05:15 14:30"
+    "%Y:%m:%d %H": "%Y%m%d%H",  # Date with hour: "2023:05:15 14"
+    "%Y:%m:%d": "%Y%m%d",  # Date only: "2023:05:15"
+    "%Y:%m": "%Y%m",  # Year and month: "2023:05"
+    "%Y": "%Y",  # Year only: "2023"
+}
+
 # Named tuple to hold datetime and its format
 DateTimeAndFormat = namedtuple("DateTimeAndFormat", ["datetime", "format_str"])
 
@@ -117,10 +128,18 @@ class MediaSorter:
             return None
 
         # Try to extract datetime from metadata
+        dt_info_exif = self.extract_datetimeinfo_from_exif(file_path)
+        dt_info_filename = self.extract_datetimeinfo_from_filename(file_path.name)
         dt_info = (
-            self.extract_datetimeinfo_from_exif(file_path)
-            or self.extract_datetimeinfo_from_filename(file_path.name)
+            dt_info_exif
+            or dt_info_filename
             or self.extract_datetimeinfo_from_folder_name(parent_dir_name)
+        )
+
+        should_write_exif = (
+            dt_info_exif is None
+            and dt_info_filename is not None
+            and extension in MEDIA_EXTENSIONS
         )
 
         base_name = self.create_base_filename(dt_info, parent_dir_name)
@@ -137,6 +156,10 @@ class MediaSorter:
             else:
                 print(f" - Renaming file: {file_path.name} -> {new_filename}")
                 file_path.rename(file_path.parent / new_filename)
+                # Optionally write EXIF DateTimeOriginal if missing
+                if should_write_exif:
+                    self.write_exif(file_path.parent / new_filename, dt_info)
+
         self.n_files_processed += 1
 
     def parse_folder_name(
@@ -209,16 +232,6 @@ class MediaSorter:
             Optional[MediaDateInfo]: datetime object if EXIF date found, None otherwise
         """
 
-        # All supported datetime formats, from most specific to least specific
-        # Map format strings to output formats
-        datetime_format_map = {
-            "%Y:%m:%d %H:%M:%S": "%Y%m%d%H%M%S",  # Standard EXIF: "2023:05:15 14:30:45"
-            "%Y:%m:%d %H:%M": "%Y%m%d%H%M",  # Date with hour and minute: "2023:05:15 14:30"
-            "%Y:%m:%d %H": "%Y%m%d%H",  # Date with hour: "2023:05:15 14"
-            "%Y:%m:%d": "%Y%m%d",  # Date only: "2023:05:15"
-            "%Y:%m": "%Y%m",  # Year and month: "2023:05"
-            "%Y": "%Y",  # Year only: "2023"
-        }
         try:
             with Image.open(file_path) as image:
                 exif_data = image.getexif()
@@ -231,7 +244,7 @@ class MediaSorter:
                             for (
                                 format_str,
                                 output_format,
-                            ) in datetime_format_map.items():
+                            ) in EXIF_DT_FORMAT_MAP.items():
                                 try:
                                     dt = datetime.strptime(value, format_str)
                                     return DateTimeAndFormat(dt, output_format)
@@ -401,6 +414,46 @@ class MediaSorter:
             pass
 
         return None
+
+    def write_exif(self, file_path: Path, dt_info: DateTimeAndFormat):
+        """
+        Write EXIF DateTimeOriginal tag to the image file.
+
+        Args:
+            file_path: Path to the image file
+            dt_info: DateTimeAndFormat object containing datetime and format string
+        """
+        try:
+            with Image.open(file_path) as image:
+                exif_data = image.getexif()
+                if exif_data is None:
+                    exif_data = {}
+
+                for datetime_tag_name in DATETIME_EXIF_TAGS:
+                    date_time_tag = None
+                    for tag_id, tag_name in ExifTags.TAGS.items():
+                        if tag_name == datetime_tag_name:
+                            date_time_tag = tag_id
+                            break
+
+                    if date_time_tag is not None:
+                        # Do not overwrite existing EXIF date
+                        if bool(exif_data[date_time_tag]):
+                            continue
+
+                        exif_format = next(
+                            (
+                                exif_format
+                                for exif_format, format_str in EXIF_DT_FORMAT_MAP.items()
+                                if format_str == dt_info.format_str
+                            ),
+                            "%Y:%m:%d %H:%M:%S",
+                        )
+                        dt_str = dt_info.datetime.strftime(exif_format)
+                        exif_data[date_time_tag] = dt_str
+                        image.save(file_path, exif=exif_data)
+        except Exception:
+            pass
 
     def show_progress(self):
         """Display progress of processing."""
