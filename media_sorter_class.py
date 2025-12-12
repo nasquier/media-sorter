@@ -1,5 +1,4 @@
 import argparse
-from itertools import count
 import os
 import re
 from pathlib import Path
@@ -89,8 +88,7 @@ class MediaSorter:
             new_folder_name_array.append(formatted_title)
         new_folder_name = "_".join(new_folder_name_array)
 
-        # Print progress
-        self.n_folders_processed += 1
+        self.show_progress()
 
         # Rename folder if needed
         if new_folder_name:
@@ -98,15 +96,13 @@ class MediaSorter:
             if new_folder_path != folder_path:
                 if self.dry_mode:
                     pass
-                    print(
-                        f" - Would rename folder: {folder_name} -> {new_folder_name}\n"
-                    )
+                    print(f" - Would rename folder: {folder_name} -> {new_folder_name}")
                 else:
-                    print(f" - Renaming folder: {folder_name} -> {new_folder_name}\n")
+                    print(f" - Renaming folder: {folder_name} -> {new_folder_name}")
                     folder_path.rename(new_folder_path)
-                    return new_folder_path
+                return new_folder_path if not self.dry_mode else folder_path
+        self.n_folders_processed += 1
 
-        self.show_progress()
         return folder_path
 
     def rename_file(self, file_path: Path) -> Path:
@@ -136,21 +132,16 @@ class MediaSorter:
             file_path.parent, base_name, extension
         )
 
-        # Print progress
-        self.n_files_processed += 1
+        self.show_progress()
+
         # Rename file if needed
         if file_path.name != new_filename:
             if self.dry_mode:
-                print(
-                    f" - Would rename file: {file_path.name} -> {new_filename}\n",
-                )
+                print(f" - Would rename file: {file_path.name} -> {new_filename}")
             else:
-                print(
-                    f" - Renaming file: {file_path.name} -> {new_filename}\n",
-                )
+                print(f" - Renaming file: {file_path.name} -> {new_filename}")
                 file_path.rename(file_path.parent / new_filename)
-
-        self.show_progress()
+        self.n_files_processed += 1
 
     def parse_folder_name(
         self, folder_name: str
@@ -193,7 +184,7 @@ class MediaSorter:
 
         # Pattern to match optional date at the start
         # YYYY-MM-DD or YYYY-MM or YYYY optionally followed by space and title
-        pattern = r"^(\d{4})(?:-(\d{2}))(?:-(\d{2}))(?:\s(.+))?$"
+        pattern = r"^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?(?:\s(.+))?"
         match = re.match(pattern, folder_name)
         if not match:
             return "", folder_name
@@ -420,10 +411,9 @@ class MediaSorter:
                 * 100
             )
             print(
-                # "\033[F\033[K" +
-                f"\rProcessing: {self.n_files_processed + self.n_folders_processed}/{self.n_total_items} ({percentage:.1f}%)"
-                + "\033[F",
-                end="",
+                f"\nProcessing: {self.n_files_processed + self.n_folders_processed}/{self.n_total_items} ({percentage:.1f}%)",
+                end="\033[F",
+                # end="\r",
                 flush=True,
             )
 
