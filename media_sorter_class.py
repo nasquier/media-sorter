@@ -214,9 +214,26 @@ class MediaSorter:
         return date_str, title or ""
 
     def format_folder_title(self, title: str) -> str:
-        """Format folder title by replacing spaces with hyphens and converting to lowercase."""
-        return title.replace(" ", "-").lower()
+        """
+        Remove special characters, keeping alphanumeric (including Unicode), spaces.
+        Preserve accented characters (é, à, ñ, ü, etc.)
+        Replace spaces with hyphens and converting to lowercase.
 
+        Args:
+            text: Text to sanitize
+
+        Returns:
+            Sanitized text with special characters removed
+        """
+        # Replace spaces and underscores with hyphens
+        sanitized = re.sub(r"[\s_]", "-", title)
+        # We erase all non-word characters except hyphens
+        sanitized = re.sub(r"[^\w-]", "", sanitized, flags=re.UNICODE)
+        # Clean up multi hyphens
+        sanitized = re.sub(r"-+", "-", sanitized)
+        return sanitized.lower()
+
+    # Clean up multiple spaces and trim
     def create_base_filename(
         self, dt_info: DateTimeAndFormat, parent_dir_name: str
     ) -> str:
