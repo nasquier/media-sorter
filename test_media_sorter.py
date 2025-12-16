@@ -224,35 +224,36 @@ class TestGenerateUniqueFilename:
     def test_unique_filename_no_collision(self):
         """Test generating unique filename with no collision."""
         result = self.sorter.generate_unique_filename(
-            Path(self.test_dir), "photo", ".jpg"
-        )
-        assert result == "photo.jpg"
-
-    def test_unique_filename_with_collision(self):
-        """Test generating unique filename when file exists."""
-        (Path(self.test_dir) / "photo.jpg").touch()
-        result = self.sorter.generate_unique_filename(
-            Path(self.test_dir), "photo", ".jpg"
+            Path(self.test_dir) / "photo.jpg",
+            "photo",
         )
         assert result == "photo_001.jpg"
 
+    def test_unique_filename_with_collision(self):
+        """Test generating unique filename when file exists."""
+        (Path(self.test_dir) / "photo_001.jpg").touch()
+        result = self.sorter.generate_unique_filename(
+            Path(self.test_dir) / "photo.jpg", "photo"
+        )
+        assert result == "photo_002.jpg"
+
     def test_unique_filename_multiple_collisions(self):
         """Test generating unique filename with multiple collisions."""
-        (Path(self.test_dir) / "photo.jpg").touch()
         (Path(self.test_dir) / "photo_001.jpg").touch()
         (Path(self.test_dir) / "photo_002.jpg").touch()
+        (Path(self.test_dir) / "photo_003.jpg").touch()
         result = self.sorter.generate_unique_filename(
-            Path(self.test_dir), "photo", ".jpg"
+            Path(self.test_dir) / "photo.jpg", "photo"
         )
-        assert result == "photo_003.jpg"
+        assert result == "photo_004.jpg"
 
     def test_unique_filename_different_extension(self):
         """Test that different extensions don't collide."""
-        (Path(self.test_dir) / "photo.jpg").touch()
+        (Path(self.test_dir) / "photo_001.jpg").touch()
         result = self.sorter.generate_unique_filename(
-            Path(self.test_dir), "photo", ".png"
+            Path(self.test_dir) / "photo.png", "photo"
         )
-        assert result == "photo.png"
+        assert result == "photo_001.png"
 
     def test_unique_filename_too_many_files(self):
         """Test error when too many files with same base name exist."""
@@ -264,7 +265,17 @@ class TestGenerateUniqueFilename:
                 (Path(self.test_dir) / f"photo_{i:03d}.jpg").touch()
 
         with pytest.raises(ValueError, match="Too many files with base name"):
-            self.sorter.generate_unique_filename(Path(self.test_dir), "photo", ".jpg")
+            self.sorter.generate_unique_filename(
+                Path(self.test_dir) / "photo.jpg", "photo"
+            )
+
+    def test_rename_already_renamed_file(self):
+        """Test that already renamed file returns same name."""
+        (Path(self.test_dir) / "photo_001.jpg").touch()
+        result = self.sorter.generate_unique_filename(
+            Path(self.test_dir) / "photo_001.jpg", "photo"
+        )
+        assert result == "photo_001.jpg"
 
 
 class TestExtractDateTimeInfoFromExif:

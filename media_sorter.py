@@ -141,9 +141,7 @@ class MediaSorter:
         )
 
         base_name = self.create_base_filename(dt_info, parent_dir_name)
-        new_filename = self.generate_unique_filename(
-            file_path.parent, base_name, extension
-        )
+        new_filename = self.generate_unique_filename(file_path, base_name)
 
         self.show_progress()
 
@@ -278,15 +276,14 @@ class MediaSorter:
         raise ValueError("Cannot create filename: both datetime and title are empty")
 
     def generate_unique_filename(
-        self, directory: Path, base_name: str, extension: str
+        self, old_file_path: Path, base_candidate_name: str
     ) -> str:
         """
-        Generate a unique filename in the directory by adding a counter if needed.
+        Generate a unique filename in the directory by adding a counter.
 
         Args:
-            directory: Path object for the directory
-            base_name: Base name for the file (without extension)
-            extension: File extension (including the dot)
+            old_file_path: Path object for the old file
+            base_candidate_name: Base name for the file (without extension)
 
         Returns:
             str: Unique filename
@@ -294,18 +291,18 @@ class MediaSorter:
         Raises:
             ValueError: If too many files with the same base name exist
         """
-        # Try the base name first
-        candidate = f"{base_name}{extension}"
-        if not (directory / candidate).exists():
-            return candidate
+        directory = old_file_path.parent
+        extension = old_file_path.suffix.lower()
 
         # File exists, start adding counters
         for counter in range(1, 1000):
-            candidate = f"{base_name}_{counter:03d}{extension}"
-            if not (directory / candidate).exists():
+            candidate = f"{base_candidate_name}_{counter:03d}{extension}"
+            if (directory / candidate) == old_file_path or not (
+                directory / candidate
+            ).exists():
                 return candidate
 
-        raise ValueError(f"Too many files with base name {base_name}")
+        raise ValueError(f"Too many files with base name {base_candidate_name}")
 
     def extract_datetimeinfo_from_exif(
         self, file_path: Path
