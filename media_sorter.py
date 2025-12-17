@@ -130,8 +130,8 @@ class MediaSorter:
         dt_info_filename = self.extract_datetimeinfo_from_filename(file_path.name)
         dt_info = (
             dt_info_exif
-            or self.extract_datetimeinfo_from_folder_name(parent_dir_name)
             or dt_info_filename
+            or self.extract_datetimeinfo_from_folder_name(parent_dir_name)
         )
 
         should_write_exif = (
