@@ -412,6 +412,16 @@ class MediaSorter:
             except (ValueError, TypeError):
                 pass
 
+        # Pixel pattern: PXL_20230515_xxxx.xxxx.ext
+        pixel_pattern = r"PXL_(\d{4})(\d{2})(\d{2})"
+        match = re.match(pixel_pattern, filename, re.IGNORECASE)
+        if match:
+            try:
+                year, month, day = map(int, match.groups())
+                return DateTimeAndFormat(datetime(year, month, day), "%Y%m%d")
+            except (ValueError, TypeError):
+                pass
+
         # Other pattern: IMG-20230515-143045.ext or VID-20230515-143045.ext
         pattern = r"(?:IMG|VID)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})"
         match = re.match(pattern, filename, re.IGNORECASE)
